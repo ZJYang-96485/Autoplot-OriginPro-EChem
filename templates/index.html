@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AutoPlot OriginPro EChem</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f6f7f9;
+            margin: 0;
+            padding: 0;
+            color: #1f2933;
+        }
+
+        header {
+            background: #13294B;
+            color: white;
+            padding: 24px 36px;
+        }
+
+        header h1 {
+            margin: 0;
+            font-size: 28px;
+        }
+
+        header p {
+            margin: 8px 0 0 0;
+            color: #dbe4f0;
+        }
+
+        main {
+            max-width: 1100px;
+            margin: 28px auto;
+            padding: 0 24px 48px 24px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+        }
+
+        .card h2 {
+            margin-top: 0;
+            color: #13294B;
+        }
+
+        label {
+            display: block;
+            margin-top: 14px;
+            font-weight: 700;
+        }
+
+        input,
+        select {
+            width: 100%;
+            box-sizing: border-box;
+            margin-top: 6px;
+            padding: 10px 12px;
+            border: 1px solid #c9d2df;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        button {
+            margin-top: 20px;
+            padding: 11px 18px;
+            border: none;
+            border-radius: 8px;
+            background: #FF5F05;
+            color: white;
+            font-size: 15px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        button:hover {
+            opacity: 0.9;
+        }
+
+        .messages {
+            margin-bottom: 18px;
+        }
+
+        .message {
+            background: #fff3e8;
+            border-left: 4px solid #FF5F05;
+            padding: 12px 14px;
+            margin-bottom: 8px;
+            border-radius: 6px;
+        }
+
+        .dataset-info {
+            margin-top: 16px;
+            padding: 12px;
+            border-radius: 8px;
+            background: #f0f4f8;
+            font-size: 14px;
+            line-height: 1.45;
+        }
+
+        .plot-card {
+            margin-top: 24px;
+        }
+
+        .plot-card img {
+            max-width: 100%;
+            border: 1px solid #d8dee8;
+            border-radius: 10px;
+            background: white;
+        }
+
+        .hint {
+            font-size: 13px;
+            color: #66788a;
+            margin-top: 6px;
+        }
+
+        .full-width {
+            grid-column: 1 / -1;
+        }
+
+        @media (max-width: 820px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+<header>
+    <h1>AutoPlot OriginPro EChem</h1>
+    <p>Upload CSV data, select variables, choose a suitable plot type, and generate a preview plot.</p>
+</header>
+
+<main>
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            <div class="messages">
+                {% for message in messages %}
+                    <div class="message">{{ message }}</div>
+                {% endfor %}
+            </div>
+        {% endif %}
+    {% endwith %}
+
+    <div class="grid">
+        <section class="card">
+            <h2>Upload CSV Dataset</h2>
+
+            <form action="{{ url_for('upload_dataset') }}" method="post" enctype="multipart/form-data">
+                <label for="dataset_name">Dataset name</label>
+                <input type="text" id="dataset_name" name="dataset_name" placeholder="Example: ORR LSV test data">
+
+                <label for="dataset_file">CSV file</label>
+                <input type="file" id="dataset_file" name="dataset_file" accept=".csv">
+
+                <button type="submit">Upload Dataset</button>
+            </form>
+
+            <p class="hint">Only .csv files are supported in Version 1.</p>
+        </section>
+
+        <section class="card">
+            <h2>Dataset Information</h2>
+
+            <label for="dataset_info_select">Select dataset</label>
+            <select id="dataset_info_select">
+                <option value="">Choose a dataset</option>
+                {% for dataset in datasets %}
+                    <option value="{{ dataset.dataset_id }}">
+                        {{ dataset.file_name }} | {{ dataset.dataset_type }}
+                    </option>
+                {% endfor %}
+            </select>
+
+            <div id="dataset_info" class="dataset-info">
+                No dataset selected.
+            </div>
+        </section>
+
+        <section class="card full-width">
+            <h2>Create Plot</h2>
+
+            <form action="{{ url_for('plot') }}" method="post">
+                <label for="dataset_id">Dataset</label>
+                <select id="dataset_id" name="dataset_id" required>
+                    <option value="">Choose a dataset</option>
+                    {% for dataset in datasets %}
+                        <option value="{{ dataset.dataset_id }}"
+                            {% if form_state.dataset_id == dataset.dataset_id %}selected{% endif %}>
+                            {{ dataset.file_name }} | {{ dataset.dataset_type }}
+                        </option>
+                    {% endfor %}
+                </select>
+
+                <label for="x_col">X variable</label>
+                <select id="x_col" name="x_col" required></select>
+
+                <label for="y_col">Y variable</label>
+                <select id="y_col" name="y_col"></select>
+
+                <label for="x_label">X-axis name</label>
+                <input type="text" id="x_label" name="x_label" value="{{ form_state.x_label or '' }}">
+
+                <label for="y_label">Y-axis name</label>
+                <input type="text" id="y_label" name="y_label" value="{{ form_state.y_label or '' }}">
+
+                <label for="plot_type">Plot type</label>
+                <select id="plot_type" name="plot_type" required></select>
+
+                <div id="plot_hint" class="dataset-info">
+                    Select a dataset and variables to see suitable plot types.
+                </div>
+
+                <button type="submit">Generate Plot</button>
+            </form>
+        </section>
+
+        {% if plot_url %}
+            <section class="card full-width plot-card">
+                <h2>Generated Plot</h2>
+                <img src="{{ plot_url }}" alt="Generated plot">
+            </section>
+        {% endif %}
+    </div>
+</main>
+
+<script>
+    const formState = {{ form_state | tojson }};
+    const datasetSelect = document.getElementById("dataset_id");
+    const datasetInfoSelect = document.getElementById("dataset_info_select");
+    const xSelect = document.getElementById("x_col");
+    const ySelect = document.getElementById("y_col");
+    const plotTypeSelect = document.getElementById("plot_type");
+    const xLabelInput = document.getElementById("x_label");
+    const yLabelInput = document.getElementById("y_label");
+    const plotHint = document.getElementById("plot_hint");
+    const datasetInfo = document.getElementById("dataset_info");
+
+    let currentColumnTypes = {};
+
+    function labelColumn(col, type) {
+        return `${col} (${type})`;
+    }
+
+    function clearSelect(select) {
+        select.innerHTML = "";
+    }
+
+    function addOption(select, value, text, selectedValue) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = text;
+
+        if (selectedValue && selectedValue === value) {
+            option.selected = true;
+        }
+
+        select.appendChild(option);
+    }
+
+    function loadDatasetColumns(datasetId) {
+        if (!datasetId) {
+            clearSelect(xSelect);
+            clearSelect(ySelect);
+            clearSelect(plotTypeSelect);
+            return;
+        }
+
+        fetch(`/dataset/${datasetId}/columns`)
+            .then(response => response.json())
+            .then(data => {
+                currentColumnTypes = data.column_types;
+
+                clearSelect(xSelect);
+                clearSelect(ySelect);
+
+                addOption(ySelect, "none", "None / count plot", formState.y_col);
+
+                data.column_names.forEach(col => {
+                    const type = data.column_types[col];
+                    addOption(xSelect, col, labelColumn(col, type), formState.x_col);
+                    addOption(ySelect, col, labelColumn(col, type), formState.y_col);
+                });
+
+                if (!formState.x_col && data.numeric_columns.length > 0) {
+                    xSelect.value = data.numeric_columns[0];
+                }
+
+                if (!formState.y_col && data.numeric_columns.length > 1) {
+                    ySelect.value = data.numeric_columns[1];
+                }
+
+                if (!xLabelInput.value && xSelect.value) {
+                    xLabelInput.value = xSelect.value;
+                }
+
+                if (!yLabelInput.value && ySelect.value && ySelect.value !== "none") {
+                    yLabelInput.value = ySelect.value;
+                }
+
+                updatePlotTypeOptions();
+            });
+    }
+
+    function loadDatasetInfo(datasetId) {
+        if (!datasetId) {
+            datasetInfo.textContent = "No dataset selected.";
+            return;
+        }
+
+        fetch(`/dataset/${datasetId}/columns`)
+            .then(response => response.json())
+            .then(data => {
+                datasetInfo.innerHTML = `
+                    <strong>File:</strong> ${data.file_name}<br>
+                    <strong>Rows:</strong> ${data.rows}<br>
+                    <strong>Columns:</strong> ${data.columns}<br>
+                    <strong>Numeric columns:</strong> ${data.numeric_columns.join(", ") || "None"}<br>
+                    <strong>Categorical columns:</strong> ${data.categorical_columns.join(", ") || "None"}
+                `;
+            });
+    }
+
+    function updatePlotTypeOptions() {
+        const datasetId = datasetSelect.value;
+        const xCol = xSelect.value;
+        const yCol = ySelect.value;
+
+        if (!datasetId || !xCol) {
+            return;
+        }
+
+        fetch("/suggest_plot_types", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+                dataset_id: datasetId,
+                x_col: xCol,
+                y_col: yCol
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            clearSelect(plotTypeSelect);
+
+            data.plot_types.forEach(plotType => {
+                addOption(plotTypeSelect, plotType, plotType, formState.plot_type);
+            });
+
+            plotHint.innerHTML = `
+                <strong>X type:</strong> ${data.x_type}<br>
+                <strong>Y type:</strong> ${data.y_type}<br>
+                <strong>Suggested plot types:</strong> ${data.plot_types.join(", ")}
+            `;
+        });
+    }
+
+    datasetSelect.addEventListener("change", () => {
+        formState.x_col = null;
+        formState.y_col = null;
+        formState.plot_type = null;
+        xLabelInput.value = "";
+        yLabelInput.value = "";
+        loadDatasetColumns(datasetSelect.value);
+    });
+
+    datasetInfoSelect.addEventListener("change", () => {
+        loadDatasetInfo(datasetInfoSelect.value);
+    });
+
+    xSelect.addEventListener("change", () => {
+        xLabelInput.value = xSelect.value;
+        updatePlotTypeOptions();
+    });
+
+    ySelect.addEventListener("change", () => {
+        if (ySelect.value === "none") {
+            yLabelInput.value = "Count";
+        } else {
+            yLabelInput.value = ySelect.value;
+        }
+
+        updatePlotTypeOptions();
+    });
+
+    if (datasetSelect.value) {
+        loadDatasetColumns(datasetSelect.value);
+    }
+
+    if (datasetInfoSelect.value) {
+        loadDatasetInfo(datasetInfoSelect.value);
+    }
+</script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+{
+    "datasets": [
+        {
+            "dataset_id": "penguins_test_data",
+            "file_name": "penguins.csv",
+            "file_path": "C:\\Users\\Joe Yang\\AutoPlot-OriginPro-EChem\\Autoplot-OriginPro-EChem\\data_storage\\test_data\\penguins.csv",
+            "source": "Palmer Penguins",
+            "dataset_type": "test_data",
+            "uploaded_by": "system",
+            "created_at": "2026-06-16T22:18:04",
+            "description": "Mixed numerical and categorical dataset for testing automatic plotting.",
+            "rows": 344,
+            "columns": 7,
+            "column_names": [
+                "species",
+                "island",
+                "bill_length_mm",
+                "bill_depth_mm",
+                "flipper_length_mm",
+                "body_mass_g",
+                "sex"
+            ],
+            "numeric_columns": [
+                "bill_length_mm",
+                "bill_depth_mm",
+                "flipper_length_mm",
+                "body_mass_g"
+            ],
+            "categorical_columns": [
+                "species",
+                "island",
+                "sex"
+            ]
+        }
+    ]
+}
