@@ -2,8 +2,8 @@ from pathlib import Path
 from datetime import datetime
 import json
 import uuid
+import re
 
-import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -27,6 +27,7 @@ MANIFEST_PATH = METADATA_DIR / "dataset_manifest.json"
 PLOT_DIR = BASE_DIR / "static" / "generated_plots"
 
 ALLOWED_EXTENSIONS = {"csv", "dat", "dta", "txt"}
+SECONDARY_MODES = {"none", "same_y_different_x", "same_x_different_y"}
 
 
 def create_dirs():
@@ -62,6 +63,13 @@ def is_supported_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
+def sanitize_color(value, default):
+    if isinstance(value, str) and re.fullmatch(r"#[0-9A-Fa-f]{6}", value):
+        return value
+
+    return default
+
+
 def register_dataset(file_path, dataset_type, source, uploaded_by="user", description=""):
     manifest = read_manifest()
     data_info = inspect_dataset(file_path)
@@ -92,6 +100,7 @@ def register_test_data_if_needed():
 
     for item in manifest["datasets"]:
         file_path = Path(item.get("file_path", ""))
+
         if file_path.exists():
             existing_paths.add(file_path.resolve())
 
@@ -165,37 +174,9 @@ def suggest_plot_types(x_type, y_type):
     return ["scatter"]
 
 
-def create_plot(
-    dataset_id,
-    x_col,
-    y_col,
-    x_label,
-    y_label,
-    plot_type,
-    plot_title,
-    bottom_annotation,
-    marker_color,
-    line_color,
-    show_top_x_axis,
-    show_right_y_axis,
-    top_x_label,
-    right_y_label
-):
-    dataset = get_dataset(dataset_id)
-
-    if dataset is None:
-        raise ValueError("Dataset not found.")
-
-    data_path = Path(dataset["file_path"])
-    df = read_dataset(data_path)
-
-    if x_col not in df.columns:
-        raise ValueError("X column not found.")
-
-    if y_col and y_col != "none" and y_col not in df.columns:
-        raise ValueError("Y column not found.")
-
-    fig, ax = plt.subplots(figsize=(8, 5), dpi=150)
+def plot_single_curve(ax, df, x_col, y_col, plot_type, marker_color, line_color, label):
+    if plot_type in ["scatter", "line", "bar", "box"] and y_col in [None, "", "none"]:
+        raise ValueError("This plot type requires a Y variable.")
 
     if plot_type == "scatter":
         data = df[[x_col, y_col]].dropna()
@@ -204,7 +185,8 @@ def create_plot(
             data[y_col],
             facecolor=marker_color,
             edgecolor=line_color,
-            alpha=0.75
+            alpha=0.75,
+            label=label if label else "Primary"
         )
 
     elif plot_type == "line":
@@ -215,7 +197,8 @@ def create_plot(
             marker="o",
             color=line_color,
             markerfacecolor=marker_color,
-            markeredgecolor=line_color
+            markeredgecolor=line_color,
+            label=label if label else "Primary"
         )
 
     elif plot_type == "bar":
@@ -225,7 +208,8 @@ def create_plot(
             grouped.index.astype(str),
             grouped.values,
             color=marker_color,
-            edgecolor=line_color
+            edgecolor=line_color,
+            label=label if label else "Primary"
         )
 
     elif plot_type == "box":
@@ -249,9 +233,9 @@ def create_plot(
             counts.index,
             counts.values,
             color=marker_color,
-            edgecolor=line_color
+            edgecolor=line_color,
+            label=label if label else "Primary"
         )
-        y_label = y_label if y_label else "Count"
 
     elif plot_type == "histogram":
         data = df[[x_col]].dropna()
@@ -259,12 +243,119 @@ def create_plot(
             data[x_col],
             bins=20,
             facecolor=marker_color,
-            edgecolor=line_color
+            edgecolor=line_color,
+            label=label if label else "Primary"
         )
-        y_label = y_label if y_label else "Count"
 
     else:
         raise ValueError("Unsupported plot type.")
+
+
+def plot_secondary_line_or_scatter(ax, df, x_col, y_col, plot_type, marker_color, line_color, label):
+    data = df[[x_col, y_col]].dropna().sort_values(by=x_col)
+
+    if plot_type == "scatter":
+        ax.scatter(
+            data[x_col],
+            data[y_col],
+            facecolor=marker_color,
+            edgecolor=line_color,
+            alpha=0.75,
+            label=label if label else "Secondary"
+        )
+
+    else:
+        ax.plot(
+            data[x_col],
+            data[y_col],
+            marker="o",
+            color=line_color,
+            markerfacecolor=marker_color,
+            markeredgecolor=line_color,
+            label=label if label else "Secondary"
+        )
+
+
+def create_plot(
+    dataset_id,
+    x_col,
+    y_col,
+    x_label,
+    y_label,
+    plot_type,
+    plot_title,
+    bottom_annotation,
+    marker_color,
+    line_color,
+    primary_label,
+    secondary_mode,
+    x2_col,
+    y2_col,
+    top_x_label,
+    right_y_label,
+    secondary_plot_type,
+    second_marker_color,
+    second_line_color,
+    second_label
+):
+    dataset = get_dataset(dataset_id)
+
+    if dataset is None:
+        raise ValueError("Dataset not found.")
+
+    data_path = Path(dataset["file_path"])
+    df = read_dataset(data_path)
+
+    if secondary_mode not in SECONDARY_MODES:
+        raise ValueError("Invalid secondary mode.")
+
+    if x_col not in df.columns:
+        raise ValueError("Primary X column not found.")
+
+    if y_col and y_col != "none" and y_col not in df.columns:
+        raise ValueError("Primary Y column not found.")
+
+    if secondary_mode != "none" and plot_type not in ["line", "scatter"]:
+        raise ValueError("Secondary curve mode is only supported for line or scatter plots.")
+
+    if secondary_mode != "none" and y_col in [None, "", "none"]:
+        raise ValueError("Secondary curve mode requires a primary Y variable.")
+
+    if secondary_mode == "same_y_different_x":
+        if x2_col in [None, "", "none"]:
+            raise ValueError("Second X variable is required for Y(X1) and Y(X2) mode.")
+
+        if x2_col not in df.columns:
+            raise ValueError("Second X column not found.")
+
+        y2_col = y_col
+
+    if secondary_mode == "same_x_different_y":
+        if y2_col in [None, "", "none"]:
+            raise ValueError("Second Y variable is required for Y1(X) and Y2(X) mode.")
+
+        if y2_col not in df.columns:
+            raise ValueError("Second Y column not found.")
+
+        x2_col = x_col
+
+    marker_color = sanitize_color(marker_color, "#FF5F05")
+    line_color = sanitize_color(line_color, "#13294B")
+    second_marker_color = sanitize_color(second_marker_color, "#9A4DFF")
+    second_line_color = sanitize_color(second_line_color, "#9A4DFF")
+
+    fig, ax = plt.subplots(figsize=(8, 5), dpi=150)
+
+    plot_single_curve(
+        ax=ax,
+        df=df,
+        x_col=x_col,
+        y_col=y_col,
+        plot_type=plot_type,
+        marker_color=marker_color,
+        line_color=line_color,
+        label=primary_label
+    )
 
     final_x_label = x_label if x_label else x_col
 
@@ -276,25 +367,72 @@ def create_plot(
     ax.set_xlabel(final_x_label)
     ax.set_ylabel(final_y_label)
 
+    secondary_axis = None
+
+    if secondary_mode == "same_y_different_x":
+        secondary_axis = ax.twiny()
+        secondary_axis.patch.set_alpha(0)
+        secondary_axis.xaxis.tick_top()
+        secondary_axis.xaxis.set_label_position("top")
+        secondary_axis.spines["bottom"].set_visible(False)
+        secondary_axis.grid(False)
+
+        plot_secondary_line_or_scatter(
+            ax=secondary_axis,
+            df=df,
+            x_col=x2_col,
+            y_col=y_col,
+            plot_type=secondary_plot_type,
+            marker_color=second_marker_color,
+            line_color=second_line_color,
+            label=second_label
+        )
+
+        secondary_axis.set_xlabel(top_x_label if top_x_label else x2_col)
+
+    elif secondary_mode == "same_x_different_y":
+        secondary_axis = ax.twinx()
+        secondary_axis.patch.set_alpha(0)
+        secondary_axis.yaxis.tick_right()
+        secondary_axis.yaxis.set_label_position("right")
+        secondary_axis.spines["left"].set_visible(False)
+        secondary_axis.grid(False)
+
+        plot_secondary_line_or_scatter(
+            ax=secondary_axis,
+            df=df,
+            x_col=x_col,
+            y_col=y2_col,
+            plot_type=secondary_plot_type,
+            marker_color=second_marker_color,
+            line_color=second_line_color,
+            label=second_label
+        )
+
+        secondary_axis.set_ylabel(right_y_label if right_y_label else y2_col)
+
     if plot_title:
         ax.set_title(plot_title)
 
-    if show_top_x_axis:
-        top_axis = ax.secondary_xaxis("top")
-        top_axis.set_xlabel(top_x_label if top_x_label else final_x_label)
-
-    if show_right_y_axis:
-        right_axis = ax.secondary_yaxis("right")
-        right_axis.set_ylabel(right_y_label if right_y_label else final_y_label)
-
     ax.grid(True, alpha=0.25)
+    ax.tick_params(axis="x", rotation=30)
 
-    plt.xticks(rotation=30, ha="right")
+    handles_primary, labels_primary = ax.get_legend_handles_labels()
+    handles = handles_primary
+    labels = labels_primary
+
+    if secondary_axis is not None:
+        handles_secondary, labels_secondary = secondary_axis.get_legend_handles_labels()
+        handles += handles_secondary
+        labels += labels_secondary
+
+    if handles and any(labels):
+        ax.legend(handles, labels, loc="best")
 
     if bottom_annotation:
         fig.text(
             0.5,
-            0.02,
+            0.03,
             bottom_annotation,
             ha="center",
             va="bottom",
@@ -432,10 +570,17 @@ def plot():
     bottom_annotation = request.form.get("bottom_annotation", "").strip()
     marker_color = request.form.get("marker_color", "#FF5F05")
     line_color = request.form.get("line_color", "#13294B")
-    show_top_x_axis = request.form.get("show_top_x_axis") == "on"
-    show_right_y_axis = request.form.get("show_right_y_axis") == "on"
+    primary_label = request.form.get("primary_label", "").strip()
+
+    secondary_mode = request.form.get("secondary_mode", "none")
+    x2_col = request.form.get("x2_col")
+    y2_col = request.form.get("y2_col")
     top_x_label = request.form.get("top_x_label", "").strip()
     right_y_label = request.form.get("right_y_label", "").strip()
+    secondary_plot_type = request.form.get("secondary_plot_type", "line")
+    second_marker_color = request.form.get("second_marker_color", "#9A4DFF")
+    second_line_color = request.form.get("second_line_color", "#9A4DFF")
+    second_label = request.form.get("second_label", "").strip()
 
     form_state = {
         "dataset_id": dataset_id,
@@ -448,10 +593,16 @@ def plot():
         "bottom_annotation": bottom_annotation,
         "marker_color": marker_color,
         "line_color": line_color,
-        "show_top_x_axis": show_top_x_axis,
-        "show_right_y_axis": show_right_y_axis,
+        "primary_label": primary_label,
+        "secondary_mode": secondary_mode,
+        "x2_col": x2_col,
+        "y2_col": y2_col,
         "top_x_label": top_x_label,
-        "right_y_label": right_y_label
+        "right_y_label": right_y_label,
+        "secondary_plot_type": secondary_plot_type,
+        "second_marker_color": second_marker_color,
+        "second_line_color": second_line_color,
+        "second_label": second_label
     }
 
     try:
@@ -466,10 +617,16 @@ def plot():
             bottom_annotation=bottom_annotation,
             marker_color=marker_color,
             line_color=line_color,
-            show_top_x_axis=show_top_x_axis,
-            show_right_y_axis=show_right_y_axis,
+            primary_label=primary_label,
+            secondary_mode=secondary_mode,
+            x2_col=x2_col,
+            y2_col=y2_col,
             top_x_label=top_x_label,
-            right_y_label=right_y_label
+            right_y_label=right_y_label,
+            secondary_plot_type=secondary_plot_type,
+            second_marker_color=second_marker_color,
+            second_line_color=second_line_color,
+            second_label=second_label
         )
     except Exception as error:
         flash(str(error))
