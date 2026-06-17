@@ -481,9 +481,13 @@
                     <li>X: global_time_min</li>
                     <li>Y: j_mA_cm2</li>
                     <li>Step axis: E_RHE vs sequence_index</li>
-                    <li>X label: <code>$t$ / min</code></li>
-                    <li>Y label: <code>$j$ / mA cm$^{-2}$</code></li>
-                    <li>Step-axis label: <code>$E$ / V vs. RHE</code></li>
+                    <li>X label: <code>t / min</code></li>
+                    <li>Y label: <code>j / mA cm⁻²</code></li>
+                    <li>Step-axis label: <code>E / V vs. RHE</code></li>
+                    <li>Figure size: 8.2 × 5.3</li>
+                    <li>X scale: 0 to 160, major interval 10</li>
+                    <li>Y scale: -100 to 5, major interval 20</li>
+                    <li>Step label decimals: 1</li>
                     <li>Ticks inward on all sides</li>
                     <li>Full frame on</li>
                 </ul>
@@ -520,27 +524,27 @@
 
                     <div>
                         <label for="x_label">X-axis name</label>
-                        <input type="text" id="x_label" name="x_label" value="{{ form_state.x_label or '' }}" placeholder="$t$ / min">
-                        <p class="hint">LaTeX-style math labels are supported.</p>
+                        <input type="text" id="x_label" name="x_label" value="{{ form_state.x_label or '' }}" placeholder="t / min">
+                        <p class="hint">Use plain Unicode labels for consistent bold formatting.</p>
                     </div>
 
                     <div>
                         <label for="y_label">Y-axis name</label>
-                        <input type="text" id="y_label" name="y_label" value="{{ form_state.y_label or '' }}" placeholder="$j$ / mA cm$^{-2}$">
-                        <p class="hint">Use math mode for superscripts and subscripts.</p>
+                        <input type="text" id="y_label" name="y_label" value="{{ form_state.y_label or '' }}" placeholder="j / mA cm⁻²">
+                        <p class="hint">Unicode labels such as cm⁻² stay uniformly bold when axis weight is bold.</p>
                     </div>
 
                     <div class="form-grid-full">
-                        <h3 class="section-title">LaTeX Label Examples</h3>
+                        <h3 class="section-title">Label Examples</h3>
                         <div class="dataset-info">
-                            Matplotlib math labels are supported. Use dollar signs around math symbols.
+                            For consistent bold labels, use Unicode/plain text. LaTeX math text is also supported, but parts inside $...$ may not follow the same bold style.
                             <ul class="small-list">
-                                <li><code>$t$ / min</code></li>
-                                <li><code>$E$ / V vs. RHE</code></li>
-                                <li><code>$j$ / mA cm$^{-2}$</code></li>
-                                <li><code>PBS + NaNO$_3$</code></li>
-                                <li><code>H$_2$O$_2$</code></li>
-                                <li><code>$i$ / mA</code></li>
+                                <li><strong>Recommended:</strong> <code>t / min</code></li>
+                                <li><strong>Recommended:</strong> <code>E / V vs. RHE</code></li>
+                                <li><strong>Recommended:</strong> <code>j / mA cm⁻²</code></li>
+                                <li><strong>Recommended:</strong> <code>PBS + NaNO₃</code></li>
+                                <li><strong>Recommended:</strong> <code>H₂O₂</code></li>
+                                <li><strong>Optional math style:</strong> <code>$j$ / mA cm$^{-2}$</code></li>
                             </ul>
                         </div>
                     </div>
@@ -552,7 +556,7 @@
 
                     <div>
                         <label for="plot_title">Topic head</label>
-                        <input type="text" id="plot_title" name="plot_title" value="{{ form_state.plot_title or '' }}" placeholder="PBS + NaNO$_3$ chronoamperometry">
+                        <input type="text" id="plot_title" name="plot_title" value="{{ form_state.plot_title or '' }}" placeholder="Chronoamperometry sequence in PBS + NaNO₃">
                     </div>
 
                     <div>
@@ -567,7 +571,7 @@
 
                     <div class="form-grid-full">
                         <label for="primary_label">Primary curve label</label>
-                        <input type="text" id="primary_label" name="primary_label" value="{{ form_state.primary_label or '' }}" placeholder="PBS + NaNO$_3$">
+                        <input type="text" id="primary_label" name="primary_label" value="{{ form_state.primary_label or '' }}" placeholder="PBS + NaNO₃">
                     </div>
 
                     <div class="form-grid-full">
@@ -677,13 +681,90 @@
 
                     <div>
                         <label for="step_axis_label">Bottom step-axis label</label>
-                        <input type="text" id="step_axis_label" name="step_axis_label" value="{{ form_state.step_axis_label or '' }}" placeholder="$E$ / V vs. RHE">
-                        <p class="hint">For the stitched sequence graph, use $E$ / V vs. RHE.</p>
+                        <input type="text" id="step_axis_label" name="step_axis_label" value="{{ form_state.step_axis_label or '' }}" placeholder="E / V vs. RHE">
+                        <p class="hint">Use plain text for consistent bold formatting.</p>
                     </div>
 
                     <div>
                         <label for="step_axis_max_ticks">Maximum step-axis ticks</label>
                         <input type="number" id="step_axis_max_ticks" name="step_axis_max_ticks" min="2" max="64" step="1" value="{{ form_state.step_axis_max_ticks or '12' }}">
+                    </div>
+
+                    <div>
+                        <label for="step_axis_decimal_places">Step-axis decimal places</label>
+                        <input type="number" id="step_axis_decimal_places" name="step_axis_decimal_places" min="0" max="6" step="1" value="{{ form_state.step_axis_decimal_places or '1' }}">
+                        <p class="hint">Use 1 to avoid long labels like 0.000137.</p>
+                    </div>
+
+                    <div>
+                        <label for="step_axis_label_stride">Step-axis label stride</label>
+                        <input type="number" id="step_axis_label_stride" name="step_axis_label_stride" min="1" max="100" step="1" value="{{ form_state.step_axis_label_stride or '2' }}">
+                        <p class="hint">Larger stride shows fewer bottom labels.</p>
+                    </div>
+
+                    <div class="form-grid-full">
+                        <h3 class="section-title">Figure Size and Axis Intervals</h3>
+                    </div>
+
+                    <div>
+                        <label for="figure_width">Figure width</label>
+                        <input type="number" id="figure_width" name="figure_width" min="3" max="30" step="0.1" value="{{ form_state.figure_width or '8' }}">
+                    </div>
+
+                    <div>
+                        <label for="figure_height">Figure height</label>
+                        <input type="number" id="figure_height" name="figure_height" min="2" max="20" step="0.1" value="{{ form_state.figure_height or '5' }}">
+                    </div>
+
+                    <div>
+                        <label for="figure_dpi">Figure DPI</label>
+                        <input type="number" id="figure_dpi" name="figure_dpi" min="72" max="600" step="1" value="{{ form_state.figure_dpi or '150' }}">
+                    </div>
+
+                    <div class="form-grid-full">
+                        <div class="dataset-info">
+                            For stitched sequence plots, the real X-axis is time. When Step Variable Axis is enabled, the top axis shows time intervals and the bottom labels show potential values.
+                        </div>
+                    </div>
+
+                    <div>
+                        <label for="x_min">X minimum</label>
+                        <input type="number" id="x_min" name="x_min" step="any" value="{{ form_state.x_min or '' }}">
+                    </div>
+
+                    <div>
+                        <label for="x_max">X maximum</label>
+                        <input type="number" id="x_max" name="x_max" step="any" value="{{ form_state.x_max or '' }}">
+                    </div>
+
+                    <div>
+                        <label for="x_major_interval">Top X major interval</label>
+                        <input type="number" id="x_major_interval" name="x_major_interval" step="any" value="{{ form_state.x_major_interval or '' }}">
+                    </div>
+
+                    <div>
+                        <label for="x_minor_interval">Top X minor interval</label>
+                        <input type="number" id="x_minor_interval" name="x_minor_interval" step="any" value="{{ form_state.x_minor_interval or '' }}">
+                    </div>
+
+                    <div>
+                        <label for="y_min">Y minimum</label>
+                        <input type="number" id="y_min" name="y_min" step="any" value="{{ form_state.y_min or '' }}">
+                    </div>
+
+                    <div>
+                        <label for="y_max">Y maximum</label>
+                        <input type="number" id="y_max" name="y_max" step="any" value="{{ form_state.y_max or '' }}">
+                    </div>
+
+                    <div>
+                        <label for="y_major_interval">Y major interval</label>
+                        <input type="number" id="y_major_interval" name="y_major_interval" step="any" value="{{ form_state.y_major_interval or '' }}">
+                    </div>
+
+                    <div>
+                        <label for="y_minor_interval">Y minor interval</label>
+                        <input type="number" id="y_minor_interval" name="y_minor_interval" step="any" value="{{ form_state.y_minor_interval or '' }}">
                     </div>
 
                     <div class="form-grid-full">
@@ -861,12 +942,12 @@
 
                             <div id="top_x_label_block">
                                 <label for="top_x_label">Top X-axis name</label>
-                                <input type="text" id="top_x_label" name="top_x_label" value="{{ form_state.top_x_label or '' }}" placeholder="$t$ / min">
+                                <input type="text" id="top_x_label" name="top_x_label" value="{{ form_state.top_x_label or '' }}" placeholder="t / min">
                             </div>
 
                             <div id="right_y_label_block">
                                 <label for="right_y_label">Right Y-axis name</label>
-                                <input type="text" id="right_y_label" name="right_y_label" value="{{ form_state.right_y_label or '' }}" placeholder="$j$ / mA cm$^{-2}$">
+                                <input type="text" id="right_y_label" name="right_y_label" value="{{ form_state.right_y_label or '' }}" placeholder="j / mA cm⁻²">
                             </div>
 
                             <div>

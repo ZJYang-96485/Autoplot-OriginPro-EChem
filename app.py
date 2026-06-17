@@ -8,6 +8,7 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MultipleLocator
 
 from flask import Flask, render_template, request, redirect, url_for, jsonify, flash
 from werkzeug.utils import secure_filename
@@ -92,6 +93,15 @@ def clamp_int(value, default, minimum, maximum):
     return max(minimum, min(value, maximum))
 
 
+def optional_float(value):
+    try:
+        if value in [None, ""]:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def safe_output_name(value, default_name):
     value = str(value).strip()
 
@@ -104,6 +114,48 @@ def safe_output_name(value, default_name):
         return default_name
 
     return value
+
+
+def format_step_value(value, decimal_places):
+    rounded = round(float(value), decimal_places)
+
+    if abs(rounded) < 10 ** (-(decimal_places + 1)):
+        rounded = 0.0
+
+    text = f"{rounded:.{decimal_places}f}"
+
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+
+    if text == "-0":
+        text = "0"
+
+    return text
+
+
+def apply_axis_limits(axis, axis_name, minimum=None, maximum=None):
+    if axis_name == "x":
+        current_min, current_max = axis.get_xlim()
+        axis.set_xlim(
+            minimum if minimum is not None else current_min,
+            maximum if maximum is not None else current_max
+        )
+    else:
+        current_min, current_max = axis.get_ylim()
+        axis.set_ylim(
+            minimum if minimum is not None else current_min,
+            maximum if maximum is not None else current_max
+        )
+
+
+def apply_axis_intervals(axis, axis_name, major_interval=None, minor_interval=None):
+    target_axis = axis.xaxis if axis_name == "x" else axis.yaxis
+
+    if major_interval is not None and major_interval > 0:
+        target_axis.set_major_locator(MultipleLocator(major_interval))
+
+    if minor_interval is not None and minor_interval > 0:
+        target_axis.set_minor_locator(MultipleLocator(minor_interval))
 
 
 def register_dataset(file_path, dataset_type, source, uploaded_by="user", description=""):
@@ -710,7 +762,18 @@ def plot_secondary_line_or_scatter(
         )
 
 
-def setup_step_axis(ax, axis_df, x_col, x_label, step_value_col, sequence_col, step_axis_label, max_ticks):
+def setup_step_axis(
+    ax,
+    axis_df,
+    x_col,
+    x_label,
+    step_value_col,
+    sequence_col,
+    step_axis_label,
+    max_ticks,
+    decimal_places,
+    label_stride
+):
     if step_value_col in [None, "", "none"]:
         return None
 
@@ -734,16 +797,19 @@ def setup_step_axis(ax, axis_df, x_col, x_label, step_value_col, sequence_col, s
 
         if pd.notna(x_value) and pd.notna(step_value):
             ticks.append(x_value)
-            labels.append(f"{step_value:.3g}")
+            labels.append(format_step_value(step_value, decimal_places))
 
     if not ticks:
         return None
 
     max_ticks = max(2, max_ticks)
-    stride = max(1, int(len(ticks) / max_ticks))
+    label_stride = max(1, label_stride)
 
-    ticks = ticks[::stride]
-    labels = labels[::stride]
+    if len(ticks[::label_stride]) > max_ticks:
+        label_stride = max(label_stride, int((len(ticks) + max_ticks - 1) / max_ticks))
+
+    ticks = ticks[::label_stride]
+    labels = labels[::label_stride]
 
     top_axis = ax.secondary_xaxis("top")
     top_axis.set_xlabel(x_label if x_label else x_col)
@@ -812,7 +878,20 @@ def create_plot(
     show_right_ticks,
     show_grid,
     title_size,
-    legend_font_size
+    legend_font_size,
+    figure_width,
+    figure_height,
+    figure_dpi,
+    x_min,
+    x_max,
+    x_major_interval,
+    x_minor_interval,
+    y_min,
+    y_max,
+    y_major_interval,
+    y_minor_interval,
+    step_axis_decimal_places,
+    step_axis_label_stride
 ):
     dataset = get_dataset(dataset_id)
 
@@ -901,7 +980,24 @@ def create_plot(
     axis_label_weight = "normal" if axis_label_weight == "normal" else "bold"
     tick_direction = tick_direction if tick_direction in ["in", "out", "inout"] else "in"
 
-    fig, ax = plt.subplots(figsize=(8, 5), dpi=150)
+    figure_width = clamp_float(figure_width, 8, 3, 30)
+    figure_height = clamp_float(figure_height, 5, 2, 20)
+    figure_dpi = clamp_int(figure_dpi, 150, 72, 600)
+
+    x_min = optional_float(x_min)
+    x_max = optional_float(x_max)
+    x_major_interval = optional_float(x_major_interval)
+    x_minor_interval = optional_float(x_minor_interval)
+
+    y_min = optional_float(y_min)
+    y_max = optional_float(y_max)
+    y_major_interval = optional_float(y_major_interval)
+    y_minor_interval = optional_float(y_minor_interval)
+
+    step_axis_decimal_places = clamp_int(step_axis_decimal_places, 1, 0, 6)
+    step_axis_label_stride = clamp_int(step_axis_label_stride, 2, 1, 100)
+
+    fig, ax = plt.subplots(figsize=(figure_width, figure_height), dpi=figure_dpi)
     axis_df = df
 
     if data_reduction == "summary":
@@ -1044,7 +1140,9 @@ def create_plot(
             step_value_col=step_axis_value_col,
             sequence_col=step_axis_sequence_col,
             step_axis_label=step_axis_label,
-            max_ticks=step_axis_max_ticks
+            max_ticks=step_axis_max_ticks,
+            decimal_places=step_axis_decimal_places,
+            label_stride=step_axis_label_stride
         )
 
     if plot_title:
@@ -1094,6 +1192,16 @@ def create_plot(
             tick_length=tick_length,
             tick_direction=tick_direction
         )
+
+    apply_axis_limits(ax, "x", x_min, x_max)
+    apply_axis_limits(ax, "y", y_min, y_max)
+
+    if use_step_axis and step_top_axis is not None:
+        apply_axis_intervals(step_top_axis, "x", x_major_interval, x_minor_interval)
+    else:
+        apply_axis_intervals(ax, "x", x_major_interval, x_minor_interval)
+
+    apply_axis_intervals(ax, "y", y_major_interval, y_minor_interval)
 
     handles_primary, labels_primary = ax.get_legend_handles_labels()
     handles = handles_primary
@@ -1524,6 +1632,8 @@ def plot():
     step_axis_sequence_col = request.form.get("step_axis_sequence_col", "sequence_index")
     step_axis_label = request.form.get("step_axis_label", "").strip()
     step_axis_max_ticks = request.form.get("step_axis_max_ticks", 12)
+    step_axis_decimal_places = request.form.get("step_axis_decimal_places", 1)
+    step_axis_label_stride = request.form.get("step_axis_label_stride", 2)
 
     line_order = request.form.get("line_order", "original")
     show_markers = request.form.get("show_markers") == "on"
@@ -1548,6 +1658,20 @@ def plot():
     show_grid = request.form.get("show_grid") == "on"
     title_size = request.form.get("title_size", 18)
     legend_font_size = request.form.get("legend_font_size", 11)
+
+    figure_width = request.form.get("figure_width", 8)
+    figure_height = request.form.get("figure_height", 5)
+    figure_dpi = request.form.get("figure_dpi", 150)
+
+    x_min = request.form.get("x_min", "")
+    x_max = request.form.get("x_max", "")
+    x_major_interval = request.form.get("x_major_interval", "")
+    x_minor_interval = request.form.get("x_minor_interval", "")
+
+    y_min = request.form.get("y_min", "")
+    y_max = request.form.get("y_max", "")
+    y_major_interval = request.form.get("y_major_interval", "")
+    y_minor_interval = request.form.get("y_minor_interval", "")
 
     secondary_mode = request.form.get("secondary_mode", "none")
     x2_col = request.form.get("x2_col")
@@ -1596,6 +1720,8 @@ def plot():
         "step_axis_sequence_col": step_axis_sequence_col,
         "step_axis_label": step_axis_label,
         "step_axis_max_ticks": step_axis_max_ticks,
+        "step_axis_decimal_places": step_axis_decimal_places,
+        "step_axis_label_stride": step_axis_label_stride,
         "line_order": line_order,
         "show_markers": show_markers,
         "show_legend": show_legend,
@@ -1618,6 +1744,17 @@ def plot():
         "show_grid": show_grid,
         "title_size": title_size,
         "legend_font_size": legend_font_size,
+        "figure_width": figure_width,
+        "figure_height": figure_height,
+        "figure_dpi": figure_dpi,
+        "x_min": x_min,
+        "x_max": x_max,
+        "x_major_interval": x_major_interval,
+        "x_minor_interval": x_minor_interval,
+        "y_min": y_min,
+        "y_max": y_max,
+        "y_major_interval": y_major_interval,
+        "y_minor_interval": y_minor_interval,
         "secondary_mode": secondary_mode,
         "x2_col": x2_col,
         "y2_col": y2_col,
@@ -1687,7 +1824,20 @@ def plot():
             show_right_ticks=show_right_ticks,
             show_grid=show_grid,
             title_size=title_size,
-            legend_font_size=legend_font_size
+            legend_font_size=legend_font_size,
+            figure_width=figure_width,
+            figure_height=figure_height,
+            figure_dpi=figure_dpi,
+            x_min=x_min,
+            x_max=x_max,
+            x_major_interval=x_major_interval,
+            x_minor_interval=x_minor_interval,
+            y_min=y_min,
+            y_max=y_max,
+            y_major_interval=y_major_interval,
+            y_minor_interval=y_minor_interval,
+            step_axis_decimal_places=step_axis_decimal_places,
+            step_axis_label_stride=step_axis_label_stride
         )
     except Exception as error:
         flash(str(error))
