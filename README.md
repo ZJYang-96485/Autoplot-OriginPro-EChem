@@ -1,6 +1,8 @@
 # Autoplot-OriginPro-EChem
-Author: Zihan (Joe) Yang, joeyang2@illinois.edu
-This repository is utilized for developing automated graphing tools via OriginPro, with a specialization in Electrochemistry experiments.
+
+Author: Zihan (Joe) Yang, joeyang2 AT illinois.edu
+
+This repository is utilized for developing automated graphing tools via OriginPro, with a specialization in Electrochemistry experiments, with extra supports on data cleaning, data analysis, statistical modeling, and machine learning.
 
 ## Requirements
 
@@ -8,10 +10,14 @@ Before running the plotting scripts, make sure **OriginPro is already installed 
 
 Required software:
 
-- Windows computer
+- Windows computer (Mac currently does not support OriginPro)
+
 - OriginPro installed locally
+
 - Python 3.9 or newer
+
 - Git
+
 - VS Code
 
 
@@ -21,11 +27,13 @@ Kindly using this automation tool with your dataset via these following steps,
 
 1. Please check out the 'requirements.txt' file. Make sure the environment is properly loaded.
 
-2.
+#Open this repository via your own VSCode terminal:
 
-3.
+Run 'pip install -r requirements.txt'
 
-4.
+2. Use the Automation tool via terminal:
 
-5.
+Run 'python app.py'
+
+3. Questions or Suggestions can be forwarded to joeyang2 AT illinois.edu
 
