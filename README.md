@@ -35,5 +35,21 @@ Run 'pip install -r requirements.txt'
 
 Run 'python app.py'
 
+3. To use Subscript and superscript: Copy paste and edit here.
+
+E / V vs. RHE
+
+NaNO₃
+
+H₂O₂
+
+mA cm⁻²
+
+mol L⁻¹
+
+s⁻¹
+
+
+
 3. Questions or Suggestions can be forwarded to joeyang2 AT illinois.edu
 

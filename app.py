@@ -8,7 +8,7 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.ticker import MultipleLocator
+from matplotlib.ticker import MultipleLocator, FixedLocator, FixedFormatter
 
 from flask import Flask, render_template, request, redirect, url_for, jsonify, flash
 from werkzeug.utils import secure_filename
@@ -34,6 +34,8 @@ PLOT_DIR = BASE_DIR / "static" / "generated_plots"
 ALLOWED_EXTENSIONS = {"csv", "dat", "dta", "txt"}
 SECONDARY_MODES = {"none", "same_y_different_x", "same_x_different_y"}
 STEP_AXIS_MODES = {"auto_data", "uniform_custom"}
+STEP_AXIS_PLACEMENTS = {"uniform", "data_positions", "custom_positions"}
+TICK_MODES = {"auto", "uniform", "custom"}
 
 
 def create_dirs():
@@ -117,6 +119,26 @@ def safe_output_name(value, default_name):
     return value
 
 
+def parse_csv_text(value):
+    if value in [None, ""]:
+        return []
+
+    return [item.strip() for item in str(value).split(",") if item.strip()]
+
+
+def parse_csv_floats(value):
+    items = parse_csv_text(value)
+    numbers = []
+
+    for item in items:
+        try:
+            numbers.append(float(item))
+        except ValueError:
+            continue
+
+    return numbers
+
+
 def format_step_value(value, decimal_places):
     rounded = round(float(value), decimal_places)
 
@@ -134,11 +156,42 @@ def format_step_value(value, decimal_places):
     return text
 
 
-def parse_csv_text(value):
-    if value in [None, ""]:
+def evenly_select_records(records, target_count):
+    if not records or target_count <= 0:
         return []
 
-    return [item.strip() for item in str(value).split(",") if item.strip()]
+    if target_count >= len(records):
+        return records
+
+    if target_count == 1:
+        return [records[len(records) // 2]]
+
+    indices = [
+        round(index * (len(records) - 1) / (target_count - 1))
+        for index in range(target_count)
+    ]
+
+    return [records[index] for index in indices]
+
+
+def get_axis_x_range(axis_df, x_col, x_min, x_max, ax):
+    data_x = pd.to_numeric(axis_df[x_col], errors="coerce").dropna()
+
+    if x_min is not None:
+        x_start = x_min
+    elif not data_x.empty:
+        x_start = float(data_x.min())
+    else:
+        x_start = ax.get_xlim()[0]
+
+    if x_max is not None:
+        x_end = x_max
+    elif not data_x.empty:
+        x_end = float(data_x.max())
+    else:
+        x_end = ax.get_xlim()[1]
+
+    return x_start, x_end
 
 
 def apply_axis_limits(axis, axis_name, minimum=None, maximum=None):
@@ -156,14 +209,38 @@ def apply_axis_limits(axis, axis_name, minimum=None, maximum=None):
         )
 
 
-def apply_axis_intervals(axis, axis_name, major_interval=None, minor_interval=None):
+def apply_axis_tick_control(
+    axis,
+    axis_name,
+    tick_mode,
+    major_interval=None,
+    minor_interval=None,
+    custom_ticks=None,
+    custom_labels=None
+):
     target_axis = axis.xaxis if axis_name == "x" else axis.yaxis
+    tick_mode = tick_mode if tick_mode in TICK_MODES else "auto"
 
-    if major_interval is not None and major_interval > 0:
-        target_axis.set_major_locator(MultipleLocator(major_interval))
+    if tick_mode == "custom":
+        ticks = parse_csv_floats(custom_ticks)
+        labels = parse_csv_text(custom_labels)
 
-    if minor_interval is not None and minor_interval > 0:
-        target_axis.set_minor_locator(MultipleLocator(minor_interval))
+        if ticks:
+            target_axis.set_major_locator(FixedLocator(ticks))
+
+            if labels and len(labels) == len(ticks):
+                target_axis.set_major_formatter(FixedFormatter(labels))
+
+        return
+
+    if tick_mode == "uniform":
+        if major_interval is not None and major_interval > 0:
+            target_axis.set_major_locator(MultipleLocator(major_interval))
+
+        if minor_interval is not None and minor_interval > 0:
+            target_axis.set_minor_locator(MultipleLocator(minor_interval))
+
+        return
 
 
 def register_dataset(file_path, dataset_type, source, uploaded_by="user", description=""):
@@ -800,6 +877,27 @@ def build_auto_step_records(axis_df, x_col, step_value_col, step_group_col, deci
     return records
 
 
+def build_step_labels_and_records(records, step_axis_mode, custom_labels, max_ticks, label_stride):
+    labels_from_user = parse_csv_text(custom_labels)
+
+    if step_axis_mode == "uniform_custom" and labels_from_user:
+        return labels_from_user, []
+
+    if not records:
+        return [], []
+
+    max_ticks = max(2, max_ticks)
+    label_stride = max(1, label_stride)
+
+    if len(records[::label_stride]) > max_ticks:
+        label_stride = max(label_stride, int((len(records) + max_ticks - 1) / max_ticks))
+
+    selected_records = records[::label_stride]
+    labels = [record["label"] for record in selected_records]
+
+    return labels, selected_records
+
+
 def setup_step_axis(
     ax,
     axis_df,
@@ -809,10 +907,12 @@ def setup_step_axis(
     step_group_col,
     step_axis_label,
     step_axis_mode,
+    step_axis_placement,
     max_ticks,
     decimal_places,
     label_stride,
     custom_labels,
+    custom_positions,
     label_rotation,
     label_pad,
     x_min,
@@ -821,39 +921,8 @@ def setup_step_axis(
     top_axis = ax.secondary_xaxis("top")
     top_axis.set_xlabel(x_label if x_label else x_col)
 
-    labels_from_user = parse_csv_text(custom_labels)
-
-    if step_axis_mode == "uniform_custom" and labels_from_user:
-        data_x = pd.to_numeric(axis_df[x_col], errors="coerce").dropna()
-
-        if x_min is not None:
-            x_start = x_min
-        elif not data_x.empty:
-            x_start = float(data_x.min())
-        else:
-            x_start = ax.get_xlim()[0]
-
-        if x_max is not None:
-            x_end = x_max
-        elif not data_x.empty:
-            x_end = float(data_x.max())
-        else:
-            x_end = ax.get_xlim()[1]
-
-        if len(labels_from_user) == 1:
-            ticks = [(x_start + x_end) / 2]
-        else:
-            ticks = [
-                x_start + index * (x_end - x_start) / (len(labels_from_user) - 1)
-                for index in range(len(labels_from_user))
-            ]
-        label_alignment = "center" if float(label_rotation) == 0 else "right"
-
-        ax.set_xticks(ticks)
-        ax.set_xticklabels(labels_from_user, rotation=label_rotation, ha=label_alignment)
-        ax.set_xlabel(step_axis_label if step_axis_label else step_value_col, labelpad=label_pad)
-
-        return top_axis
+    step_axis_mode = step_axis_mode if step_axis_mode in STEP_AXIS_MODES else "auto_data"
+    step_axis_placement = step_axis_placement if step_axis_placement in STEP_AXIS_PLACEMENTS else "uniform"
 
     records = build_auto_step_records(
         axis_df=axis_df,
@@ -863,23 +932,57 @@ def setup_step_axis(
         decimal_places=decimal_places
     )
 
-    if not records:
+    labels, selected_records = build_step_labels_and_records(
+        records=records,
+        step_axis_mode=step_axis_mode,
+        custom_labels=custom_labels,
+        max_ticks=max_ticks,
+        label_stride=label_stride
+    )
+
+    if not labels:
         return top_axis
 
-    max_ticks = max(2, max_ticks)
-    label_stride = max(1, label_stride)
+    x_start, x_end = get_axis_x_range(axis_df, x_col, x_min, x_max, ax)
+    positions_from_user = parse_csv_floats(custom_positions)
 
-    if len(records[::label_stride]) > max_ticks:
-        label_stride = max(label_stride, int((len(records) + max_ticks - 1) / max_ticks))
+    if step_axis_placement == "custom_positions" and positions_from_user:
+        ticks = positions_from_user[:len(labels)]
+        labels = labels[:len(ticks)]
 
-    selected_records = records[::label_stride]
-    ticks = [record["x"] for record in selected_records]
-    labels = [record["label"] for record in selected_records]
-    
+    elif step_axis_placement == "data_positions":
+        if step_axis_mode == "auto_data" and selected_records:
+            ticks = [record["x"] for record in selected_records]
+            labels = labels[:len(ticks)]
+        elif records:
+            position_records = evenly_select_records(records, len(labels))
+            ticks = [record["x"] for record in position_records]
+            labels = labels[:len(ticks)]
+        else:
+            if len(labels) == 1:
+                ticks = [(x_start + x_end) / 2]
+            else:
+                ticks = [
+                    x_start + index * (x_end - x_start) / (len(labels) - 1)
+                    for index in range(len(labels))
+                ]
+
+    else:
+        if len(labels) == 1:
+            ticks = [(x_start + x_end) / 2]
+        else:
+            ticks = [
+                x_start + index * (x_end - x_start) / (len(labels) - 1)
+                for index in range(len(labels))
+            ]
+
+    if not ticks:
+        return top_axis
+
     label_alignment = "center" if float(label_rotation) == 0 else "right"
 
     ax.set_xticks(ticks)
-    ax.set_xticklabels(labels, rotation=label_rotation, ha="right")
+    ax.set_xticklabels(labels, rotation=label_rotation, ha=label_alignment)
     ax.set_xlabel(step_axis_label if step_axis_label else step_value_col, labelpad=label_pad)
 
     return top_axis
@@ -909,6 +1012,7 @@ def create_plot(
     smooth_window,
     use_step_axis,
     step_axis_mode,
+    step_axis_placement,
     step_axis_value_col,
     step_axis_group_col,
     step_axis_label,
@@ -948,15 +1052,22 @@ def create_plot(
     figure_dpi,
     x_min,
     x_max,
+    x_tick_mode,
     x_major_interval,
     x_minor_interval,
+    x_custom_ticks,
+    x_custom_tick_labels,
     y_min,
     y_max,
+    y_tick_mode,
     y_major_interval,
     y_minor_interval,
+    y_custom_ticks,
+    y_custom_tick_labels,
     step_axis_decimal_places,
     step_axis_label_stride,
     step_axis_custom_labels,
+    step_axis_custom_positions,
     step_axis_label_rotation,
     step_axis_label_pad,
     bottom_margin
@@ -977,6 +1088,15 @@ def create_plot(
 
     if step_axis_mode not in STEP_AXIS_MODES:
         step_axis_mode = "auto_data"
+
+    if step_axis_placement not in STEP_AXIS_PLACEMENTS:
+        step_axis_placement = "uniform"
+
+    if x_tick_mode not in TICK_MODES:
+        x_tick_mode = "auto"
+
+    if y_tick_mode not in TICK_MODES:
+        y_tick_mode = "auto"
 
     if x_col not in df.columns:
         raise ValueError("Primary X column not found.")
@@ -1064,6 +1184,12 @@ def create_plot(
     y_max = optional_float(y_max)
     y_major_interval = optional_float(y_major_interval)
     y_minor_interval = optional_float(y_minor_interval)
+
+    if x_tick_mode == "auto" and (x_major_interval is not None or x_minor_interval is not None):
+        x_tick_mode = "uniform"
+
+    if y_tick_mode == "auto" and (y_major_interval is not None or y_minor_interval is not None):
+        y_tick_mode = "uniform"
 
     step_axis_decimal_places = clamp_int(step_axis_decimal_places, 1, 0, 6)
     step_axis_label_stride = clamp_int(step_axis_label_stride, 2, 1, 100)
@@ -1236,10 +1362,12 @@ def create_plot(
             step_group_col=step_axis_group_col,
             step_axis_label=step_axis_label,
             step_axis_mode=step_axis_mode,
+            step_axis_placement=step_axis_placement,
             max_ticks=step_axis_max_ticks,
             decimal_places=step_axis_decimal_places,
             label_stride=step_axis_label_stride,
             custom_labels=step_axis_custom_labels,
+            custom_positions=step_axis_custom_positions,
             label_rotation=step_axis_label_rotation,
             label_pad=step_axis_label_pad,
             x_min=x_min,
@@ -1278,11 +1406,35 @@ def create_plot(
     apply_axis_limits(ax, "y", y_min, y_max)
 
     if use_step_axis and step_top_axis is not None:
-        apply_axis_intervals(step_top_axis, "x", x_major_interval, x_minor_interval)
+        apply_axis_tick_control(
+            axis=step_top_axis,
+            axis_name="x",
+            tick_mode=x_tick_mode,
+            major_interval=x_major_interval,
+            minor_interval=x_minor_interval,
+            custom_ticks=x_custom_ticks,
+            custom_labels=x_custom_tick_labels
+        )
     else:
-        apply_axis_intervals(ax, "x", x_major_interval, x_minor_interval)
+        apply_axis_tick_control(
+            axis=ax,
+            axis_name="x",
+            tick_mode=x_tick_mode,
+            major_interval=x_major_interval,
+            minor_interval=x_minor_interval,
+            custom_ticks=x_custom_ticks,
+            custom_labels=x_custom_tick_labels
+        )
 
-    apply_axis_intervals(ax, "y", y_major_interval, y_minor_interval)
+    apply_axis_tick_control(
+        axis=ax,
+        axis_name="y",
+        tick_mode=y_tick_mode,
+        major_interval=y_major_interval,
+        minor_interval=y_minor_interval,
+        custom_ticks=y_custom_ticks,
+        custom_labels=y_custom_tick_labels
+    )
 
     handles_primary, labels_primary = ax.get_legend_handles_labels()
     handles = handles_primary
@@ -1713,6 +1865,7 @@ def plot():
 
     use_step_axis = request.form.get("use_step_axis") == "on"
     step_axis_mode = request.form.get("step_axis_mode", "auto_data")
+    step_axis_placement = request.form.get("step_axis_placement", "uniform")
     step_axis_value_col = request.form.get("step_axis_value_col")
     step_axis_group_col = request.form.get("step_axis_group_col")
     step_axis_label = request.form.get("step_axis_label", "").strip()
@@ -1720,12 +1873,14 @@ def plot():
     step_axis_decimal_places = request.form.get("step_axis_decimal_places", 1)
     step_axis_label_stride = request.form.get("step_axis_label_stride", 2)
     step_axis_custom_labels = request.form.get("step_axis_custom_labels", "").strip()
+    step_axis_custom_positions = request.form.get("step_axis_custom_positions", "").strip()
     step_axis_label_rotation = request.form.get("step_axis_label_rotation", 0)
     step_axis_label_pad = request.form.get("step_axis_label_pad", 14)
     bottom_margin = request.form.get("bottom_margin", "")
 
     if use_step_axis and step_axis_custom_labels:
         step_axis_mode = "uniform_custom"
+
     if step_axis_group_col in [None, "", "none"]:
         step_axis_group_col = request.form.get("step_axis_sequence_col", "")
 
@@ -1758,13 +1913,19 @@ def plot():
 
     x_min = request.form.get("x_min", "")
     x_max = request.form.get("x_max", "")
+    x_tick_mode = request.form.get("x_tick_mode", "auto")
     x_major_interval = request.form.get("x_major_interval", "")
     x_minor_interval = request.form.get("x_minor_interval", "")
+    x_custom_ticks = request.form.get("x_custom_ticks", "").strip()
+    x_custom_tick_labels = request.form.get("x_custom_tick_labels", "").strip()
 
     y_min = request.form.get("y_min", "")
     y_max = request.form.get("y_max", "")
+    y_tick_mode = request.form.get("y_tick_mode", "auto")
     y_major_interval = request.form.get("y_major_interval", "")
     y_minor_interval = request.form.get("y_minor_interval", "")
+    y_custom_ticks = request.form.get("y_custom_ticks", "").strip()
+    y_custom_tick_labels = request.form.get("y_custom_tick_labels", "").strip()
 
     secondary_mode = request.form.get("secondary_mode", "none")
     x2_col = request.form.get("x2_col")
@@ -1810,6 +1971,7 @@ def plot():
         "smooth_window": smooth_window,
         "use_step_axis": use_step_axis,
         "step_axis_mode": step_axis_mode,
+        "step_axis_placement": step_axis_placement,
         "step_axis_value_col": step_axis_value_col,
         "step_axis_group_col": step_axis_group_col,
         "step_axis_sequence_col": step_axis_group_col,
@@ -1818,6 +1980,7 @@ def plot():
         "step_axis_decimal_places": step_axis_decimal_places,
         "step_axis_label_stride": step_axis_label_stride,
         "step_axis_custom_labels": step_axis_custom_labels,
+        "step_axis_custom_positions": step_axis_custom_positions,
         "step_axis_label_rotation": step_axis_label_rotation,
         "step_axis_label_pad": step_axis_label_pad,
         "bottom_margin": bottom_margin,
@@ -1847,12 +2010,18 @@ def plot():
         "figure_dpi": figure_dpi,
         "x_min": x_min,
         "x_max": x_max,
+        "x_tick_mode": x_tick_mode,
         "x_major_interval": x_major_interval,
         "x_minor_interval": x_minor_interval,
+        "x_custom_ticks": x_custom_ticks,
+        "x_custom_tick_labels": x_custom_tick_labels,
         "y_min": y_min,
         "y_max": y_max,
+        "y_tick_mode": y_tick_mode,
         "y_major_interval": y_major_interval,
         "y_minor_interval": y_minor_interval,
+        "y_custom_ticks": y_custom_ticks,
+        "y_custom_tick_labels": y_custom_tick_labels,
         "secondary_mode": secondary_mode,
         "x2_col": x2_col,
         "y2_col": y2_col,
@@ -1889,6 +2058,7 @@ def plot():
             smooth_window=smooth_window,
             use_step_axis=use_step_axis,
             step_axis_mode=step_axis_mode,
+            step_axis_placement=step_axis_placement,
             step_axis_value_col=step_axis_value_col,
             step_axis_group_col=step_axis_group_col,
             step_axis_label=step_axis_label,
@@ -1928,15 +2098,22 @@ def plot():
             figure_dpi=figure_dpi,
             x_min=x_min,
             x_max=x_max,
+            x_tick_mode=x_tick_mode,
             x_major_interval=x_major_interval,
             x_minor_interval=x_minor_interval,
+            x_custom_ticks=x_custom_ticks,
+            x_custom_tick_labels=x_custom_tick_labels,
             y_min=y_min,
             y_max=y_max,
+            y_tick_mode=y_tick_mode,
             y_major_interval=y_major_interval,
             y_minor_interval=y_minor_interval,
+            y_custom_ticks=y_custom_ticks,
+            y_custom_tick_labels=y_custom_tick_labels,
             step_axis_decimal_places=step_axis_decimal_places,
             step_axis_label_stride=step_axis_label_stride,
             step_axis_custom_labels=step_axis_custom_labels,
+            step_axis_custom_positions=step_axis_custom_positions,
             step_axis_label_rotation=step_axis_label_rotation,
             step_axis_label_pad=step_axis_label_pad,
             bottom_margin=bottom_margin

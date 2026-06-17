@@ -277,10 +277,10 @@
 
             <form action="{{ url_for('upload_batch_dataset') }}" method="post" enctype="multipart/form-data">
                 <label for="batch_name">Combined dataset name</label>
-                <input type="text" id="batch_name" name="batch_name" placeholder="Example: PBS + NaNO3 1600 rpm">
+                <input type="text" id="batch_name" name="batch_name" placeholder="Example: batch condition">
 
                 <label for="batch_condition">Condition label for all files</label>
-                <input type="text" id="batch_condition" name="batch_condition" placeholder="Example: PBS + NaNO3">
+                <input type="text" id="batch_condition" name="batch_condition" placeholder="Example: condition A">
 
                 <label for="dataset_files">Data files</label>
                 <input type="file" id="dataset_files" name="dataset_files" accept=".csv,.dat,.dta,.txt" multiple>
@@ -299,7 +299,6 @@
                     <div>
                         <label for="sequence_name">Sequential dataset name</label>
                         <input type="text" id="sequence_name" name="sequence_name" placeholder="Example: sequence experiment">
-
                     </div>
 
                     <div>
@@ -467,16 +466,20 @@
         </section>
 
         <section class="card">
-            <h2>Step Axis Concept</h2>
+            <h2>Axis Control Concept</h2>
             <div class="dataset-info">
-                Two modes are available:
+                Tick control supports:
                 <ul class="small-list">
-                    <li><strong>Auto from data:</strong> read labels from a selected step-value column and step-group column.</li>
-                    <li><strong>Uniform custom labels:</strong> manually typed labels are evenly distributed across the X-axis range.</li>
+                    <li><strong>Auto:</strong> let matplotlib choose ticks.</li>
+                    <li><strong>Uniform interval:</strong> use major and minor intervals.</li>
+                    <li><strong>Custom positions:</strong> type exact tick positions and optional labels.</li>
                 </ul>
-                Example custom labels:
-                <br>
-                <code>0.5, 0.2, -0.1, -0.5, -0.9, -0.7, -0.3, 0, 0.4</code>
+                Step label placement supports:
+                <ul class="small-list">
+                    <li><strong>Uniform across X range:</strong> clean published-style spacing.</li>
+                    <li><strong>At data group positions:</strong> labels appear where step groups occur.</li>
+                    <li><strong>Custom X positions:</strong> manually control label positions.</li>
+                </ul>
             </div>
         </section>
 
@@ -641,9 +644,17 @@
                         <label for="step_axis_mode">Step-axis label mode</label>
                         <select id="step_axis_mode" name="step_axis_mode">
                             <option value="auto_data" {% if form_state.step_axis_mode == "auto_data" or not form_state.step_axis_mode %}selected{% endif %}>Auto from data</option>
-                            <option value="uniform_custom" {% if form_state.step_axis_mode == "uniform_custom" %}selected{% endif %}>Uniform custom labels</option>
+                            <option value="uniform_custom" {% if form_state.step_axis_mode == "uniform_custom" %}selected{% endif %}>Custom labels</option>
                         </select>
-                        <p class="hint">Uniform custom labels are evenly distributed across the X-axis range.</p>
+                    </div>
+
+                    <div>
+                        <label for="step_axis_placement">Step label placement</label>
+                        <select id="step_axis_placement" name="step_axis_placement">
+                            <option value="uniform" {% if form_state.step_axis_placement == "uniform" or not form_state.step_axis_placement %}selected{% endif %}>Uniform across X range</option>
+                            <option value="data_positions" {% if form_state.step_axis_placement == "data_positions" %}selected{% endif %}>At data group positions</option>
+                            <option value="custom_positions" {% if form_state.step_axis_placement == "custom_positions" %}selected{% endif %}>Custom X positions</option>
+                        </select>
                     </div>
 
                     <div>
@@ -677,14 +688,19 @@
                     </div>
 
                     <div class="form-grid-full">
-                        <label for="step_axis_custom_labels">Uniform custom bottom labels</label>
+                        <label for="step_axis_custom_labels">Custom bottom labels</label>
                         <input type="text" id="step_axis_custom_labels" name="step_axis_custom_labels" value="{{ form_state.step_axis_custom_labels or '' }}" placeholder="0.5, 0.2, -0.1, -0.5, -0.9, -0.7, -0.3, 0, 0.4">
+                    </div>
+
+                    <div class="form-grid-full">
+                        <label for="step_axis_custom_positions">Custom bottom label X positions</label>
+                        <input type="text" id="step_axis_custom_positions" name="step_axis_custom_positions" value="{{ form_state.step_axis_custom_positions or '' }}" placeholder="0, 20, 40, 60, 80, 100, 120, 140, 160">
+                        <p class="hint">Used only when Step label placement is Custom X positions.</p>
                     </div>
 
                     <div>
                         <label for="step_axis_label_rotation">Bottom label rotation</label>
                         <input type="number" id="step_axis_label_rotation" name="step_axis_label_rotation" min="0" max="90" step="1" value="{{ form_state.step_axis_label_rotation or '0' }}">
-                        <p class="hint">Use 0 for horizontal labels.</p>
                     </div>
 
                     <div>
@@ -698,7 +714,7 @@
                     </div>
 
                     <div class="form-grid-full">
-                        <h3 class="section-title">Figure Size and Axis Intervals</h3>
+                        <h3 class="section-title">Figure Size</h3>
                     </div>
 
                     <div>
@@ -716,6 +732,10 @@
                         <input type="number" id="figure_dpi" name="figure_dpi" min="72" max="600" step="1" value="{{ form_state.figure_dpi or '150' }}">
                     </div>
 
+                    <div class="form-grid-full">
+                        <h3 class="section-title">X / Top Axis Ticks</h3>
+                    </div>
+
                     <div>
                         <label for="x_min">X minimum</label>
                         <input type="number" id="x_min" name="x_min" step="any" value="{{ form_state.x_min or '' }}">
@@ -727,13 +747,37 @@
                     </div>
 
                     <div>
-                        <label for="x_major_interval">Top X major interval</label>
+                        <label for="x_tick_mode">X tick mode</label>
+                        <select id="x_tick_mode" name="x_tick_mode">
+                            <option value="auto" {% if form_state.x_tick_mode == "auto" or not form_state.x_tick_mode %}selected{% endif %}>Auto</option>
+                            <option value="uniform" {% if form_state.x_tick_mode == "uniform" %}selected{% endif %}>Uniform interval</option>
+                            <option value="custom" {% if form_state.x_tick_mode == "custom" %}selected{% endif %}>Custom positions</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label for="x_major_interval">X major interval</label>
                         <input type="number" id="x_major_interval" name="x_major_interval" step="any" value="{{ form_state.x_major_interval or '' }}">
                     </div>
 
                     <div>
-                        <label for="x_minor_interval">Top X minor interval</label>
+                        <label for="x_minor_interval">X minor interval</label>
                         <input type="number" id="x_minor_interval" name="x_minor_interval" step="any" value="{{ form_state.x_minor_interval or '' }}">
+                    </div>
+
+                    <div class="form-grid-full">
+                        <label for="x_custom_ticks">X custom tick positions</label>
+                        <input type="text" id="x_custom_ticks" name="x_custom_ticks" value="{{ form_state.x_custom_ticks or '' }}" placeholder="0, 10, 20, 30, 40, 50">
+                    </div>
+
+                    <div class="form-grid-full">
+                        <label for="x_custom_tick_labels">X custom tick labels</label>
+                        <input type="text" id="x_custom_tick_labels" name="x_custom_tick_labels" value="{{ form_state.x_custom_tick_labels or '' }}" placeholder="0, 10, 20, 30, 40, 50">
+                        <p class="hint">Optional. Number of labels should match number of custom tick positions.</p>
+                    </div>
+
+                    <div class="form-grid-full">
+                        <h3 class="section-title">Y Axis Ticks</h3>
                     </div>
 
                     <div>
@@ -747,6 +791,15 @@
                     </div>
 
                     <div>
+                        <label for="y_tick_mode">Y tick mode</label>
+                        <select id="y_tick_mode" name="y_tick_mode">
+                            <option value="auto" {% if form_state.y_tick_mode == "auto" or not form_state.y_tick_mode %}selected{% endif %}>Auto</option>
+                            <option value="uniform" {% if form_state.y_tick_mode == "uniform" %}selected{% endif %}>Uniform interval</option>
+                            <option value="custom" {% if form_state.y_tick_mode == "custom" %}selected{% endif %}>Custom positions</option>
+                        </select>
+                    </div>
+
+                    <div>
                         <label for="y_major_interval">Y major interval</label>
                         <input type="number" id="y_major_interval" name="y_major_interval" step="any" value="{{ form_state.y_major_interval or '' }}">
                     </div>
@@ -754,6 +807,16 @@
                     <div>
                         <label for="y_minor_interval">Y minor interval</label>
                         <input type="number" id="y_minor_interval" name="y_minor_interval" step="any" value="{{ form_state.y_minor_interval or '' }}">
+                    </div>
+
+                    <div class="form-grid-full">
+                        <label for="y_custom_ticks">Y custom tick positions</label>
+                        <input type="text" id="y_custom_ticks" name="y_custom_ticks" value="{{ form_state.y_custom_ticks or '' }}" placeholder="-100, -80, -60, -40, -20, 0, 20">
+                    </div>
+
+                    <div class="form-grid-full">
+                        <label for="y_custom_tick_labels">Y custom tick labels</label>
+                        <input type="text" id="y_custom_tick_labels" name="y_custom_tick_labels" value="{{ form_state.y_custom_tick_labels or '' }}" placeholder="-100, -80, -60, -40, -20, 0, 20">
                     </div>
 
                     <div class="form-grid-full">
@@ -1248,9 +1311,10 @@
                 <strong>Suggested plot types:</strong> ${data.plot_types.join(", ")}<br>
                 <ul class="small-list">
                     <li>Use Step Variable Axis to show another variable as bottom labels.</li>
-                    <li>Auto from data uses a step-value column and a step-group column.</li>
-                    <li>Uniform custom labels places typed labels evenly across the X range.</li>
-                    <li>Bottom label rotation = 0 gives horizontal bottom labels.</li>
+                    <li>Use Uniform placement for clean visual spacing.</li>
+                    <li>Use Data group positions for true experimental step positions.</li>
+                    <li>Use Custom positions when you need exact label locations.</li>
+                    <li>X and Y ticks can be auto, uniform interval, or custom positions.</li>
                     <li>Do not use secondary curve mode together with group, summary, or step-axis mode.</li>
                 </ul>
             `;
