@@ -165,7 +165,22 @@ def suggest_plot_types(x_type, y_type):
     return ["scatter"]
 
 
-def create_plot(dataset_id, x_col, y_col, x_label, y_label, plot_type):
+def create_plot(
+    dataset_id,
+    x_col,
+    y_col,
+    x_label,
+    y_label,
+    plot_type,
+    plot_title,
+    bottom_annotation,
+    marker_color,
+    line_color,
+    show_top_x_axis,
+    show_right_y_axis,
+    top_x_label,
+    right_y_label
+):
     dataset = get_dataset(dataset_id)
 
     if dataset is None:
@@ -184,50 +199,110 @@ def create_plot(dataset_id, x_col, y_col, x_label, y_label, plot_type):
 
     if plot_type == "scatter":
         data = df[[x_col, y_col]].dropna()
-        ax.scatter(data[x_col], data[y_col], facecolor="#FF5F05", edgecolor="#13294B", alpha=0.75)
+        ax.scatter(
+            data[x_col],
+            data[y_col],
+            facecolor=marker_color,
+            edgecolor=line_color,
+            alpha=0.75
+        )
 
     elif plot_type == "line":
         data = df[[x_col, y_col]].dropna().sort_values(by=x_col)
-        ax.plot(data[x_col], data[y_col], marker="o", color="#FF5F05")
+        ax.plot(
+            data[x_col],
+            data[y_col],
+            marker="o",
+            color=line_color,
+            markerfacecolor=marker_color,
+            markeredgecolor=line_color
+        )
 
     elif plot_type == "bar":
         data = df[[x_col, y_col]].dropna()
         grouped = data.groupby(x_col)[y_col].mean().sort_values(ascending=False)
-        ax.bar(grouped.index.astype(str), grouped.values, color="#FF5F05", edgecolor="#13294B")
+        ax.bar(
+            grouped.index.astype(str),
+            grouped.values,
+            color=marker_color,
+            edgecolor=line_color
+        )
 
     elif plot_type == "box":
         data = df[[x_col, y_col]].dropna()
         grouped = data.groupby(x_col)
         groups = [group[y_col].values for _, group in grouped]
         labels = [str(name) for name, _ in grouped]
-        ax.boxplot(groups, labels=labels)
+        box = ax.boxplot(groups, labels=labels, patch_artist=True)
+
+        for patch in box["boxes"]:
+            patch.set_facecolor(marker_color)
+            patch.set_edgecolor(line_color)
+
+        for item in box["whiskers"] + box["caps"] + box["medians"]:
+            item.set_color(line_color)
 
     elif plot_type == "count":
         data = df[[x_col]].dropna()
         counts = data[x_col].astype(str).value_counts()
-        ax.bar(counts.index, counts.values, color="#FF5F05", edgecolor="#13294B")
+        ax.bar(
+            counts.index,
+            counts.values,
+            color=marker_color,
+            edgecolor=line_color
+        )
         y_label = y_label if y_label else "Count"
 
     elif plot_type == "histogram":
         data = df[[x_col]].dropna()
-        ax.hist(data[x_col], bins=20, facecolor="#FF5F05", edgecolor="#13294B")
+        ax.hist(
+            data[x_col],
+            bins=20,
+            facecolor=marker_color,
+            edgecolor=line_color
+        )
         y_label = y_label if y_label else "Count"
 
     else:
         raise ValueError("Unsupported plot type.")
 
-    ax.set_xlabel(x_label if x_label else x_col)
+    final_x_label = x_label if x_label else x_col
 
     if plot_type in ["count", "histogram"]:
-        ax.set_ylabel(y_label if y_label else "Count")
+        final_y_label = y_label if y_label else "Count"
     else:
-        ax.set_ylabel(y_label if y_label else y_col)
+        final_y_label = y_label if y_label else y_col
 
-    ax.set_title(f"{plot_type.capitalize()} plot")
+    ax.set_xlabel(final_x_label)
+    ax.set_ylabel(final_y_label)
+
+    if plot_title:
+        ax.set_title(plot_title)
+
+    if show_top_x_axis:
+        top_axis = ax.secondary_xaxis("top")
+        top_axis.set_xlabel(top_x_label if top_x_label else final_x_label)
+
+    if show_right_y_axis:
+        right_axis = ax.secondary_yaxis("right")
+        right_axis.set_ylabel(right_y_label if right_y_label else final_y_label)
+
     ax.grid(True, alpha=0.25)
 
     plt.xticks(rotation=30, ha="right")
-    plt.tight_layout()
+
+    if bottom_annotation:
+        fig.text(
+            0.5,
+            0.02,
+            bottom_annotation,
+            ha="center",
+            va="bottom",
+            fontsize=9
+        )
+        plt.tight_layout(rect=[0, 0.08, 1, 1])
+    else:
+        plt.tight_layout()
 
     output_name = f"plot_{uuid.uuid4().hex[:12]}.png"
     output_path = PLOT_DIR / output_name
@@ -353,6 +428,14 @@ def plot():
     x_label = request.form.get("x_label", "").strip()
     y_label = request.form.get("y_label", "").strip()
     plot_type = request.form.get("plot_type")
+    plot_title = request.form.get("plot_title", "").strip()
+    bottom_annotation = request.form.get("bottom_annotation", "").strip()
+    marker_color = request.form.get("marker_color", "#FF5F05")
+    line_color = request.form.get("line_color", "#13294B")
+    show_top_x_axis = request.form.get("show_top_x_axis") == "on"
+    show_right_y_axis = request.form.get("show_right_y_axis") == "on"
+    top_x_label = request.form.get("top_x_label", "").strip()
+    right_y_label = request.form.get("right_y_label", "").strip()
 
     form_state = {
         "dataset_id": dataset_id,
@@ -360,7 +443,15 @@ def plot():
         "y_col": y_col,
         "x_label": x_label,
         "y_label": y_label,
-        "plot_type": plot_type
+        "plot_type": plot_type,
+        "plot_title": plot_title,
+        "bottom_annotation": bottom_annotation,
+        "marker_color": marker_color,
+        "line_color": line_color,
+        "show_top_x_axis": show_top_x_axis,
+        "show_right_y_axis": show_right_y_axis,
+        "top_x_label": top_x_label,
+        "right_y_label": right_y_label
     }
 
     try:
@@ -370,7 +461,15 @@ def plot():
             y_col=y_col,
             x_label=x_label,
             y_label=y_label,
-            plot_type=plot_type
+            plot_type=plot_type,
+            plot_title=plot_title,
+            bottom_annotation=bottom_annotation,
+            marker_color=marker_color,
+            line_color=line_color,
+            show_top_x_axis=show_top_x_axis,
+            show_right_y_axis=show_right_y_axis,
+            top_x_label=top_x_label,
+            right_y_label=right_y_label
         )
     except Exception as error:
         flash(str(error))
