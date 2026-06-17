@@ -30,7 +30,7 @@
         }
 
         main {
-            max-width: 1150px;
+            max-width: 1180px;
             margin: 28px auto;
             padding: 0 24px 48px 24px;
         }
@@ -235,7 +235,7 @@
 <body>
 <header>
     <h1>AutoPlot OriginPro EChem</h1>
-    <p>Upload data, clean files, stitch sequential experiments, summarize traces, customize graph style, and generate preview plots.</p>
+    <p>Upload data, stitch sequential experiments, convert variables, summarize traces, and generate publication-style plots.</p>
 </header>
 
 <main>
@@ -333,6 +333,96 @@
         </section>
 
         <section class="card full-width">
+            <h2>Variable Conversion</h2>
+
+            <form action="{{ url_for('convert_variables_dataset') }}" method="post">
+                <div class="form-grid">
+                    <div class="form-grid-full">
+                        <label for="conversion_dataset_id">Dataset to convert</label>
+                        <select id="conversion_dataset_id" name="conversion_dataset_id" required>
+                            <option value="">Choose a dataset</option>
+                            {% for dataset in datasets %}
+                                <option value="{{ dataset.dataset_id }}">
+                                    {{ dataset.file_name }} | {{ dataset.dataset_type }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="form-grid-full">
+                        <label for="converted_name">Converted dataset name</label>
+                        <input type="text" id="converted_name" name="converted_name" placeholder="Example: PBS_NO3_1600rpm_RHE_j">
+                    </div>
+
+                    <div class="form-grid-full">
+                        <h3 class="section-title">Potential Conversion</h3>
+                    </div>
+
+                    <div class="form-grid-full">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="convert_potential" name="convert_potential" checked>
+                            Convert potential to RHE scale
+                        </label>
+                    </div>
+
+                    <div>
+                        <label for="potential_col">Potential column</label>
+                        <input type="text" id="potential_col" name="potential_col" value="step_variable_value">
+                        <p class="hint">For stitched sequential files, use step_variable_value. For raw files, use Vf_V_vs_Ref.</p>
+                    </div>
+
+                    <div>
+                        <label for="potential_output_col">Output potential column</label>
+                        <input type="text" id="potential_output_col" name="potential_output_col" value="E_RHE">
+                    </div>
+
+                    <div>
+                        <label for="reference_offset_v">Reference offset / V</label>
+                        <input type="number" id="reference_offset_v" name="reference_offset_v" value="0" step="0.001">
+                        <p class="hint">Use your reference electrode potential versus SHE.</p>
+                    </div>
+
+                    <div>
+                        <label for="ph_value">pH</label>
+                        <input type="number" id="ph_value" name="ph_value" value="0" step="0.01">
+                        <p class="hint">Formula: E_RHE = E_ref + reference_offset + 0.05916 × pH.</p>
+                    </div>
+
+                    <div class="form-grid-full">
+                        <h3 class="section-title">Current Density Conversion</h3>
+                    </div>
+
+                    <div class="form-grid-full">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="convert_current" name="convert_current" checked>
+                            Convert current to current density
+                        </label>
+                    </div>
+
+                    <div>
+                        <label for="current_col">Current column</label>
+                        <input type="text" id="current_col" name="current_col" value="Im_A">
+                    </div>
+
+                    <div>
+                        <label for="current_density_output_col">Output current-density column</label>
+                        <input type="text" id="current_density_output_col" name="current_density_output_col" value="j_mA_cm2">
+                    </div>
+
+                    <div>
+                        <label for="electrode_area_cm2">Electrode area / cm²</label>
+                        <input type="number" id="electrode_area_cm2" name="electrode_area_cm2" value="1" step="0.0001">
+                        <p class="hint">Formula: j_mA_cm2 = Im_A × 1000 / electrode_area_cm2.</p>
+                    </div>
+                </div>
+
+                <button type="submit">Create Converted Dataset</button>
+            </form>
+
+            <p class="hint">For stitched sequence plots, convert step_variable_value to E_RHE and Im_A to j_mA_cm2.</p>
+        </section>
+
+        <section class="card full-width">
             <h2>Combine Existing Datasets</h2>
 
             <form action="{{ url_for('combine_existing_datasets') }}" method="post">
@@ -378,16 +468,17 @@
         </section>
 
         <section class="card">
-            <h2>Recommended Sequential Plot</h2>
+            <h2>Recommended Final Plot</h2>
             <div class="dataset-info">
-                For stitched chronoamperometry sequence files:
+                For the stitched electrochemistry sequence:
                 <ul class="small-list">
-                    <li>X variable: global_time_min</li>
-                    <li>Y variable: Im_A</li>
-                    <li>Plot type: line</li>
-                    <li>Data reduction: raw or summary</li>
-                    <li>Step variable axis: optional</li>
-                    <li>Secondary curve mode: none</li>
+                    <li>X: global_time_min</li>
+                    <li>Y: j_mA_cm2</li>
+                    <li>Step axis: E_RHE vs sequence_index</li>
+                    <li>Line width: 3</li>
+                    <li>Axis label size: 32 if you want a strong figure style</li>
+                    <li>Ticks inward on all sides</li>
+                    <li>Full frame on</li>
                 </ul>
             </div>
         </section>
@@ -462,7 +553,6 @@
                     <div>
                         <label for="group_col">Group by</label>
                         <select id="group_col" name="group_col"></select>
-                        <p class="hint">Optional. Use condition or source_file to plot multiple curves.</p>
                     </div>
 
                     <div>
@@ -493,7 +583,6 @@
                     <div>
                         <label for="summary_group_col">Summary group</label>
                         <select id="summary_group_col" name="summary_group_col"></select>
-                        <p class="hint">For sequential files, use source_file or sequence_index.</p>
                     </div>
 
                     <div>
@@ -549,24 +638,22 @@
                             <input type="checkbox" id="use_step_axis" name="use_step_axis" {% if form_state.use_step_axis %}checked{% endif %}>
                             Use step variable labels on bottom axis
                         </label>
-                        <p class="hint">Use this when X is global_time_min but bottom labels should show potential values.</p>
+                        <p class="hint">Use this when real X is global_time_min, but bottom labels should show potential values.</p>
                     </div>
 
                     <div>
                         <label for="step_axis_value_col">Step value column</label>
                         <select id="step_axis_value_col" name="step_axis_value_col"></select>
-                        <p class="hint">Usually step_variable_value or Vf_V_vs_Ref.</p>
                     </div>
 
                     <div>
                         <label for="step_axis_sequence_col">Step sequence column</label>
                         <select id="step_axis_sequence_col" name="step_axis_sequence_col"></select>
-                        <p class="hint">Usually sequence_index.</p>
                     </div>
 
                     <div>
                         <label for="step_axis_label">Bottom step-axis label</label>
-                        <input type="text" id="step_axis_label" name="step_axis_label" value="{{ form_state.step_axis_label or '' }}" placeholder="Example: E / V vs. Ref.">
+                        <input type="text" id="step_axis_label" name="step_axis_label" value="{{ form_state.step_axis_label or '' }}" placeholder="Example: E / V vs. RHE">
                     </div>
 
                     <div>
@@ -588,12 +675,12 @@
 
                     <div>
                         <label for="opacity">Opacity</label>
-                        <input type="number" id="opacity" name="opacity" min="0.05" max="1" step="0.05" value="{{ form_state.opacity or '0.35' }}">
+                        <input type="number" id="opacity" name="opacity" min="0.05" max="1" step="0.05" value="{{ form_state.opacity or '1.0' }}">
                     </div>
 
                     <div>
                         <label for="line_width">Line width</label>
-                        <input type="number" id="line_width" name="line_width" min="0.1" max="10" step="0.1" value="{{ form_state.line_width or '1.2' }}">
+                        <input type="number" id="line_width" name="line_width" min="0.1" max="10" step="0.1" value="{{ form_state.line_width or '2.2' }}">
                     </div>
 
                     <div>
@@ -612,6 +699,112 @@
                         <label class="checkbox-label">
                             <input type="checkbox" id="show_legend" name="show_legend" {% if form_state.show_legend %}checked{% endif %}>
                             Show legend
+                        </label>
+                    </div>
+
+                    <div class="form-grid-full">
+                        <h3 class="section-title">Publication Style and Frame</h3>
+                    </div>
+
+                    <div>
+                        <label for="style_preset">Style preset</label>
+                        <select id="style_preset" name="style_preset">
+                            <option value="nature" {% if form_state.style_preset == "nature" or not form_state.style_preset %}selected{% endif %}>Nature-like</option>
+                            <option value="custom" {% if form_state.style_preset == "custom" %}selected{% endif %}>Custom</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label for="axis_label_size">Axis label font size</label>
+                        <input type="number" id="axis_label_size" name="axis_label_size" min="6" max="80" step="1" value="{{ form_state.axis_label_size or '18' }}">
+                    </div>
+
+                    <div>
+                        <label for="tick_label_size">Tick label font size</label>
+                        <input type="number" id="tick_label_size" name="tick_label_size" min="6" max="60" step="1" value="{{ form_state.tick_label_size or '13' }}">
+                    </div>
+
+                    <div>
+                        <label for="axis_label_weight">Axis label weight</label>
+                        <select id="axis_label_weight" name="axis_label_weight">
+                            <option value="bold" {% if form_state.axis_label_weight == "bold" or not form_state.axis_label_weight %}selected{% endif %}>bold</option>
+                            <option value="normal" {% if form_state.axis_label_weight == "normal" %}selected{% endif %}>normal</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label for="title_size">Title font size</label>
+                        <input type="number" id="title_size" name="title_size" min="6" max="80" step="1" value="{{ form_state.title_size or '18' }}">
+                    </div>
+
+                    <div>
+                        <label for="legend_font_size">Legend font size</label>
+                        <input type="number" id="legend_font_size" name="legend_font_size" min="6" max="60" step="1" value="{{ form_state.legend_font_size or '11' }}">
+                    </div>
+
+                    <div>
+                        <label for="spine_width">Frame line width</label>
+                        <input type="number" id="spine_width" name="spine_width" min="0.1" max="10" step="0.1" value="{{ form_state.spine_width or '1.2' }}">
+                    </div>
+
+                    <div>
+                        <label for="tick_width">Tick line width</label>
+                        <input type="number" id="tick_width" name="tick_width" min="0.1" max="10" step="0.1" value="{{ form_state.tick_width or '1.2' }}">
+                    </div>
+
+                    <div>
+                        <label for="tick_length">Tick length</label>
+                        <input type="number" id="tick_length" name="tick_length" min="1" max="30" step="1" value="{{ form_state.tick_length or '5' }}">
+                    </div>
+
+                    <div>
+                        <label for="tick_direction">Tick direction</label>
+                        <select id="tick_direction" name="tick_direction">
+                            <option value="in" {% if form_state.tick_direction == "in" or not form_state.tick_direction %}selected{% endif %}>in</option>
+                            <option value="out" {% if form_state.tick_direction == "out" %}selected{% endif %}>out</option>
+                            <option value="inout" {% if form_state.tick_direction == "inout" %}selected{% endif %}>inout</option>
+                        </select>
+                    </div>
+
+                    <div class="form-grid-full">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="show_full_frame" name="show_full_frame" {% if form_state.show_full_frame or form_state.show_full_frame is not defined %}checked{% endif %}>
+                            Full frame
+                        </label>
+                    </div>
+
+                    <div class="form-grid-full">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="show_top_ticks" name="show_top_ticks" {% if form_state.show_top_ticks or form_state.show_top_ticks is not defined %}checked{% endif %}>
+                            Show top ticks
+                        </label>
+                    </div>
+
+                    <div class="form-grid-full">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="show_bottom_ticks" name="show_bottom_ticks" {% if form_state.show_bottom_ticks or form_state.show_bottom_ticks is not defined %}checked{% endif %}>
+                            Show bottom ticks
+                        </label>
+                    </div>
+
+                    <div class="form-grid-full">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="show_left_ticks" name="show_left_ticks" {% if form_state.show_left_ticks or form_state.show_left_ticks is not defined %}checked{% endif %}>
+                            Show left ticks
+                        </label>
+                    </div>
+
+                    <div class="form-grid-full">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="show_right_ticks" name="show_right_ticks" {% if form_state.show_right_ticks or form_state.show_right_ticks is not defined %}checked{% endif %}>
+                            Show right ticks
+                        </label>
+                    </div>
+
+                    <div class="form-grid-full">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="show_grid" name="show_grid" {% if form_state.show_grid %}checked{% endif %}>
+                            Show grid
                         </label>
                     </div>
 
@@ -703,6 +896,7 @@
 
 <script>
     const formState = {{ form_state | tojson }};
+
     const datasetSelect = document.getElementById("dataset_id");
     const datasetInfoSelect = document.getElementById("dataset_info_select");
 
@@ -713,7 +907,6 @@
 
     const groupSelect = document.getElementById("group_col");
     const groupLabelInput = document.getElementById("group_label");
-    const groupColorModeSelect = document.getElementById("group_color_mode");
 
     const summaryGroupSelect = document.getElementById("summary_group_col");
     const dataReductionSelect = document.getElementById("data_reduction");
@@ -737,8 +930,6 @@
     const y2Block = document.getElementById("y2_block");
     const topXLabelBlock = document.getElementById("top_x_label_block");
     const rightYLabelBlock = document.getElementById("right_y_label_block");
-
-    let currentColumnTypes = {};
 
     function labelColumn(column, type) {
         return `${column} (${type})`;
@@ -818,8 +1009,6 @@
         fetch(`/dataset/${datasetId}/columns`)
             .then(response => response.json())
             .then(data => {
-                currentColumnTypes = data.column_types;
-
                 clearSelect(xSelect);
                 clearSelect(ySelect);
                 clearSelect(x2Select);
@@ -856,7 +1045,9 @@
                     xSelect.value = data.numeric_columns[0];
                 }
 
-                if (!formState.y_col && data.column_names.includes("Im_A")) {
+                if (!formState.y_col && data.column_names.includes("j_mA_cm2")) {
+                    ySelect.value = "j_mA_cm2";
+                } else if (!formState.y_col && data.column_names.includes("Im_A")) {
                     ySelect.value = "Im_A";
                 } else if (!formState.y_col && data.numeric_columns.length > 1) {
                     ySelect.value = data.numeric_columns[1];
@@ -866,7 +1057,9 @@
                     summaryGroupSelect.value = "source_file";
                 }
 
-                if (!formState.step_axis_value_col && data.column_names.includes("step_variable_value")) {
+                if (!formState.step_axis_value_col && data.column_names.includes("E_RHE")) {
+                    stepAxisValueSelect.value = "E_RHE";
+                } else if (!formState.step_axis_value_col && data.column_names.includes("step_variable_value")) {
                     stepAxisValueSelect.value = "step_variable_value";
                 } else if (!formState.step_axis_value_col && data.column_names.includes("Vf_V_vs_Ref")) {
                     stepAxisValueSelect.value = "Vf_V_vs_Ref";
@@ -962,10 +1155,10 @@
                 <strong>Y type:</strong> ${data.y_type}<br>
                 <strong>Suggested plot types:</strong> ${data.plot_types.join(", ")}<br>
                 <ul class="small-list">
-                    <li>For stitched sequential data, use X = global_time_min and Y = Im_A.</li>
+                    <li>For stitched sequential data, use X = global_time_min.</li>
+                    <li>After conversion, use Y = j_mA_cm2 and step value = E_RHE.</li>
                     <li>To show potential labels on the bottom axis, enable Step Variable Axis.</li>
-                    <li>Use summary mode to reduce each source_file into one representative point.</li>
-                    <li>For summary mode, use source_file or sequence_index as the summary group.</li>
+                    <li>For paper-style plots, use full frame and inward ticks on all four sides.</li>
                     <li>Do not use secondary curve mode together with group, summary, or step-axis mode.</li>
                 </ul>
             `;

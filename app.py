@@ -15,6 +15,7 @@ from werkzeug.utils import secure_filename
 from data_loader import read_dataset, inspect_dataset, save_cleaned_dataset
 from data_combiner import combine_file_paths
 from sequential_tools import combine_sequential_file_paths
+from conversion_tools import convert_dataset_variables
 
 
 app = Flask(__name__)
@@ -253,7 +254,8 @@ def summarize_by_group(df, x_col, y_col, group_col, x_method, y_method, tail_fra
         "step_variable_name",
         "step_variable_value",
         "step_label",
-        "global_time_min"
+        "global_time_min",
+        "E_RHE"
     ]
 
     for group_name, group in df.groupby(group_col, sort=False):
@@ -270,7 +272,7 @@ def summarize_by_group(df, x_col, y_col, group_col, x_method, y_method, tail_fra
 
         for column in keep_columns:
             if column in group.columns and column not in row:
-                if column == "step_variable_value":
+                if column in ["step_variable_value", "E_RHE"]:
                     row[column] = pd.to_numeric(group[column], errors="coerce").mean()
                 else:
                     row[column] = group[column].iloc[0]
@@ -315,6 +317,83 @@ def order_data(data, x_col, line_order):
         return data.sort_values(by="source_index")
 
     return data
+
+
+def apply_plot_style(
+    ax,
+    style_preset,
+    axis_label_size,
+    tick_label_size,
+    axis_label_weight,
+    spine_width,
+    tick_width,
+    tick_length,
+    show_full_frame,
+    tick_direction,
+    show_top_ticks,
+    show_bottom_ticks,
+    show_left_ticks,
+    show_right_ticks,
+    show_grid,
+    title_size
+):
+    ax.set_facecolor("white")
+
+    for spine in ax.spines.values():
+        spine.set_linewidth(spine_width)
+
+    if show_full_frame:
+        ax.spines["top"].set_visible(True)
+        ax.spines["right"].set_visible(True)
+        ax.spines["bottom"].set_visible(True)
+        ax.spines["left"].set_visible(True)
+    else:
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+    ax.tick_params(
+        axis="both",
+        which="both",
+        direction=tick_direction,
+        top=show_top_ticks,
+        bottom=show_bottom_ticks,
+        left=show_left_ticks,
+        right=show_right_ticks,
+        width=tick_width,
+        length=tick_length,
+        labelsize=tick_label_size
+    )
+
+    ax.xaxis.label.set_size(axis_label_size)
+    ax.yaxis.label.set_size(axis_label_size)
+    ax.xaxis.label.set_weight(axis_label_weight)
+    ax.yaxis.label.set_weight(axis_label_weight)
+    ax.title.set_size(title_size)
+    ax.title.set_weight(axis_label_weight)
+
+    if show_grid:
+        ax.grid(True, alpha=0.25)
+    else:
+        ax.grid(False)
+
+
+def style_secondary_axis(axis, axis_label_size, tick_label_size, axis_label_weight, spine_width, tick_width, tick_length, tick_direction):
+    for spine in axis.spines.values():
+        spine.set_linewidth(spine_width)
+
+    axis.tick_params(
+        axis="both",
+        which="both",
+        direction=tick_direction,
+        width=tick_width,
+        length=tick_length,
+        labelsize=tick_label_size
+    )
+
+    axis.xaxis.label.set_size(axis_label_size)
+    axis.yaxis.label.set_size(axis_label_size)
+    axis.xaxis.label.set_weight(axis_label_weight)
+    axis.yaxis.label.set_weight(axis_label_weight)
 
 
 def plot_single_curve(
@@ -441,13 +520,13 @@ def plot_grouped_curves(
     if y_col in [None, "", "none"]:
         raise ValueError("Group-by plotting requires a Y variable.")
 
-    data = df[[x_col, y_col, group_col]].dropna()
+    columns = [x_col, y_col, group_col]
 
-    if "sequence_index" in df.columns:
-        data = df[[x_col, y_col, group_col, "sequence_index"]].dropna(subset=[x_col, y_col, group_col])
+    for optional_col in ["sequence_index", "source_index"]:
+        if optional_col in df.columns and optional_col not in columns:
+            columns.append(optional_col)
 
-    if "source_index" in df.columns and "source_index" not in data.columns:
-        data = data.join(df["source_index"])
+    data = df[columns].dropna(subset=[x_col, y_col, group_col])
 
     if data.empty:
         raise ValueError("No valid data points were found for the selected group-by plot.")
@@ -519,13 +598,15 @@ def plot_summary_curve(
     smooth_window,
     label
 ):
-    data = summary_df[[x_col, y_col]].dropna()
+    columns = [x_col, y_col]
+
+    if "sequence_index" in summary_df.columns:
+        columns.append("sequence_index")
+
+    data = summary_df[columns].dropna(subset=[x_col, y_col])
 
     if data.empty:
         raise ValueError("No summarized data points are available for plotting.")
-
-    if "sequence_index" in summary_df.columns:
-        data = summary_df[[x_col, y_col, "sequence_index"]].dropna(subset=[x_col, y_col])
 
     data = order_data(data, x_col, line_order)
 
@@ -631,18 +712,18 @@ def plot_secondary_line_or_scatter(
 
 def setup_step_axis(ax, axis_df, x_col, x_label, step_value_col, sequence_col, step_axis_label, max_ticks):
     if step_value_col in [None, "", "none"]:
-        return
+        return None
 
     if sequence_col in [None, "", "none"]:
-        return
+        return None
 
     if step_value_col not in axis_df.columns or sequence_col not in axis_df.columns or x_col not in axis_df.columns:
-        return
+        return None
 
     data = axis_df[[x_col, step_value_col, sequence_col]].dropna()
 
     if data.empty:
-        return
+        return None
 
     ticks = []
     labels = []
@@ -656,7 +737,7 @@ def setup_step_axis(ax, axis_df, x_col, x_label, step_value_col, sequence_col, s
             labels.append(f"{step_value:.3g}")
 
     if not ticks:
-        return
+        return None
 
     max_ticks = max(2, max_ticks)
     stride = max(1, int(len(ticks) / max_ticks))
@@ -670,6 +751,8 @@ def setup_step_axis(ax, axis_df, x_col, x_label, step_value_col, sequence_col, s
     ax.set_xticks(ticks)
     ax.set_xticklabels(labels, rotation=30, ha="right")
     ax.set_xlabel(step_axis_label if step_axis_label else step_value_col)
+
+    return top_axis
 
 
 def create_plot(
@@ -713,7 +796,23 @@ def create_plot(
     show_legend,
     marker_size,
     line_width,
-    opacity
+    opacity,
+    style_preset,
+    axis_label_size,
+    tick_label_size,
+    axis_label_weight,
+    spine_width,
+    tick_width,
+    tick_length,
+    show_full_frame,
+    tick_direction,
+    show_top_ticks,
+    show_bottom_ticks,
+    show_left_ticks,
+    show_right_ticks,
+    show_grid,
+    title_size,
+    legend_font_size
 ):
     dataset = get_dataset(dataset_id)
 
@@ -785,12 +884,22 @@ def create_plot(
 
     line_order = "sort_x" if line_order == "sort_x" else "original"
     marker_size = clamp_float(marker_size, 18, 1, 200)
-    line_width = clamp_float(line_width, 1.2, 0.1, 10)
-    opacity = clamp_float(opacity, 0.35, 0.05, 1.0)
+    line_width = clamp_float(line_width, 2.2, 0.1, 10)
+    opacity = clamp_float(opacity, 1.0, 0.05, 1.0)
     tail_fraction = clamp_float(tail_fraction, 0.2, 0.01, 1.0)
     smooth_window = clamp_int(smooth_window, 5, 3, 99)
     step_axis_max_ticks = clamp_int(step_axis_max_ticks, 12, 2, 64)
     group_color_mode = "auto" if group_color_mode == "auto" else "same"
+
+    axis_label_size = clamp_float(axis_label_size, 18, 6, 80)
+    tick_label_size = clamp_float(tick_label_size, 13, 6, 60)
+    spine_width = clamp_float(spine_width, 1.2, 0.1, 10)
+    tick_width = clamp_float(tick_width, 1.2, 0.1, 10)
+    tick_length = clamp_float(tick_length, 5, 1, 30)
+    title_size = clamp_float(title_size, 18, 6, 80)
+    legend_font_size = clamp_float(legend_font_size, 11, 6, 60)
+    axis_label_weight = "normal" if axis_label_weight == "normal" else "bold"
+    tick_direction = tick_direction if tick_direction in ["in", "out", "inout"] else "in"
 
     fig, ax = plt.subplots(figsize=(8, 5), dpi=150)
     axis_df = df
@@ -924,8 +1033,10 @@ def create_plot(
 
         secondary_axis.set_ylabel(right_y_label if right_y_label else y2_col)
 
+    step_top_axis = None
+
     if use_step_axis:
-        setup_step_axis(
+        step_top_axis = setup_step_axis(
             ax=ax,
             axis_df=axis_df,
             x_col=x_col,
@@ -939,8 +1050,50 @@ def create_plot(
     if plot_title:
         ax.set_title(plot_title)
 
-    ax.grid(True, alpha=0.25)
+    apply_plot_style(
+        ax=ax,
+        style_preset=style_preset,
+        axis_label_size=axis_label_size,
+        tick_label_size=tick_label_size,
+        axis_label_weight=axis_label_weight,
+        spine_width=spine_width,
+        tick_width=tick_width,
+        tick_length=tick_length,
+        show_full_frame=show_full_frame,
+        tick_direction=tick_direction,
+        show_top_ticks=show_top_ticks,
+        show_bottom_ticks=show_bottom_ticks,
+        show_left_ticks=show_left_ticks,
+        show_right_ticks=show_right_ticks,
+        show_grid=show_grid,
+        title_size=title_size
+    )
+
     ax.tick_params(axis="x", rotation=30)
+
+    if secondary_axis is not None:
+        style_secondary_axis(
+            axis=secondary_axis,
+            axis_label_size=axis_label_size,
+            tick_label_size=tick_label_size,
+            axis_label_weight=axis_label_weight,
+            spine_width=spine_width,
+            tick_width=tick_width,
+            tick_length=tick_length,
+            tick_direction=tick_direction
+        )
+
+    if step_top_axis is not None:
+        style_secondary_axis(
+            axis=step_top_axis,
+            axis_label_size=axis_label_size,
+            tick_label_size=tick_label_size,
+            axis_label_weight=axis_label_weight,
+            spine_width=spine_width,
+            tick_width=tick_width,
+            tick_length=tick_length,
+            tick_direction=tick_direction
+        )
 
     handles_primary, labels_primary = ax.get_legend_handles_labels()
     handles = handles_primary
@@ -953,7 +1106,10 @@ def create_plot(
 
     if show_legend and handles and any(labels):
         legend_title = group_label if group_col and group_label else group_col
-        ax.legend(handles, labels, loc="best", title=legend_title)
+        legend = ax.legend(handles, labels, loc="best", title=legend_title, fontsize=legend_font_size)
+
+        if legend is not None and legend.get_title() is not None:
+            legend.get_title().set_fontsize(legend_font_size)
 
     if bottom_annotation:
         fig.text(
@@ -962,7 +1118,7 @@ def create_plot(
             bottom_annotation,
             ha="center",
             va="bottom",
-            fontsize=9
+            fontsize=legend_font_size
         )
         plt.tight_layout(rect=[0, 0.08, 1, 1])
     else:
@@ -1155,6 +1311,69 @@ def upload_sequence_dataset():
     return redirect(url_for("index"))
 
 
+@app.route("/convert_variables", methods=["POST"])
+def convert_variables_dataset():
+    dataset_id = request.form.get("conversion_dataset_id")
+    dataset = get_dataset(dataset_id)
+
+    if dataset is None:
+        flash("Please select a valid dataset for conversion.")
+        return redirect(url_for("index"))
+
+    convert_potential = request.form.get("convert_potential") == "on"
+    convert_current = request.form.get("convert_current") == "on"
+
+    if not convert_potential and not convert_current:
+        flash("Please select at least one conversion.")
+        return redirect(url_for("index"))
+
+    converted_name = request.form.get("converted_name", "").strip()
+
+    potential_col = request.form.get("potential_col", "step_variable_value").strip()
+    reference_offset_v = request.form.get("reference_offset_v", "0").strip()
+    ph_value = request.form.get("ph_value", "0").strip()
+    potential_output_col = request.form.get("potential_output_col", "E_RHE").strip()
+
+    current_col = request.form.get("current_col", "Im_A").strip()
+    electrode_area_cm2 = request.form.get("electrode_area_cm2", "1").strip()
+    current_density_output_col = request.form.get("current_density_output_col", "j_mA_cm2").strip()
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_stem = safe_output_name(converted_name, f"converted_{timestamp}")
+    output_path = PROCESSED_DATA_DIR / f"{timestamp}_{output_stem}_converted.csv"
+
+    try:
+        convert_dataset_variables(
+            input_path=Path(dataset["file_path"]),
+            output_path=output_path,
+            convert_potential=convert_potential,
+            potential_col=potential_col,
+            reference_offset_v=reference_offset_v,
+            ph_value=ph_value,
+            potential_output_col=potential_output_col,
+            convert_current=convert_current,
+            current_col=current_col,
+            electrode_area_cm2=electrode_area_cm2,
+            current_density_output_col=current_density_output_col
+        )
+    except Exception as error:
+        flash(f"Variable conversion failed: {error}")
+        return redirect(url_for("index"))
+
+    description = converted_name if converted_name else "Dataset with converted electrochemical variables."
+
+    register_dataset(
+        file_path=output_path,
+        dataset_type="converted_data",
+        source=f"Converted from {dataset.get('file_name', 'dataset')}",
+        uploaded_by="user",
+        description=description
+    )
+
+    flash("Variable conversion completed successfully.")
+    return redirect(url_for("index"))
+
+
 @app.route("/combine_existing", methods=["POST"])
 def combine_existing_datasets():
     dataset_ids = request.form.getlist("combine_dataset_ids")
@@ -1287,6 +1506,7 @@ def plot():
     marker_color = request.form.get("marker_color", "#FF5F05")
     line_color = request.form.get("line_color", "#13294B")
     primary_label = request.form.get("primary_label", "").strip()
+
     group_col = request.form.get("group_col")
     group_label = request.form.get("group_label", "").strip()
     group_color_mode = request.form.get("group_color_mode", "same")
@@ -1309,8 +1529,25 @@ def plot():
     show_markers = request.form.get("show_markers") == "on"
     show_legend = request.form.get("show_legend") == "on"
     marker_size = request.form.get("marker_size", 18)
-    line_width = request.form.get("line_width", 1.2)
-    opacity = request.form.get("opacity", 0.35)
+    line_width = request.form.get("line_width", 2.2)
+    opacity = request.form.get("opacity", 1.0)
+
+    style_preset = request.form.get("style_preset", "nature")
+    axis_label_size = request.form.get("axis_label_size", 18)
+    tick_label_size = request.form.get("tick_label_size", 13)
+    axis_label_weight = request.form.get("axis_label_weight", "bold")
+    spine_width = request.form.get("spine_width", 1.2)
+    tick_width = request.form.get("tick_width", 1.2)
+    tick_length = request.form.get("tick_length", 5)
+    show_full_frame = request.form.get("show_full_frame") == "on"
+    tick_direction = request.form.get("tick_direction", "in")
+    show_top_ticks = request.form.get("show_top_ticks") == "on"
+    show_bottom_ticks = request.form.get("show_bottom_ticks") == "on"
+    show_left_ticks = request.form.get("show_left_ticks") == "on"
+    show_right_ticks = request.form.get("show_right_ticks") == "on"
+    show_grid = request.form.get("show_grid") == "on"
+    title_size = request.form.get("title_size", 18)
+    legend_font_size = request.form.get("legend_font_size", 11)
 
     secondary_mode = request.form.get("secondary_mode", "none")
     x2_col = request.form.get("x2_col")
@@ -1327,6 +1564,10 @@ def plot():
 
     if use_step_axis:
         secondary_mode = "none"
+
+    if data_reduction == "summary":
+        secondary_mode = "none"
+        group_col = "none"
 
     form_state = {
         "dataset_id": dataset_id,
@@ -1361,6 +1602,22 @@ def plot():
         "marker_size": marker_size,
         "line_width": line_width,
         "opacity": opacity,
+        "style_preset": style_preset,
+        "axis_label_size": axis_label_size,
+        "tick_label_size": tick_label_size,
+        "axis_label_weight": axis_label_weight,
+        "spine_width": spine_width,
+        "tick_width": tick_width,
+        "tick_length": tick_length,
+        "show_full_frame": show_full_frame,
+        "tick_direction": tick_direction,
+        "show_top_ticks": show_top_ticks,
+        "show_bottom_ticks": show_bottom_ticks,
+        "show_left_ticks": show_left_ticks,
+        "show_right_ticks": show_right_ticks,
+        "show_grid": show_grid,
+        "title_size": title_size,
+        "legend_font_size": legend_font_size,
         "secondary_mode": secondary_mode,
         "x2_col": x2_col,
         "y2_col": y2_col,
@@ -1414,7 +1671,23 @@ def plot():
             show_legend=show_legend,
             marker_size=marker_size,
             line_width=line_width,
-            opacity=opacity
+            opacity=opacity,
+            style_preset=style_preset,
+            axis_label_size=axis_label_size,
+            tick_label_size=tick_label_size,
+            axis_label_weight=axis_label_weight,
+            spine_width=spine_width,
+            tick_width=tick_width,
+            tick_length=tick_length,
+            show_full_frame=show_full_frame,
+            tick_direction=tick_direction,
+            show_top_ticks=show_top_ticks,
+            show_bottom_ticks=show_bottom_ticks,
+            show_left_ticks=show_left_ticks,
+            show_right_ticks=show_right_ticks,
+            show_grid=show_grid,
+            title_size=title_size,
+            legend_font_size=legend_font_size
         )
     except Exception as error:
         flash(str(error))

@@ -1,0 +1,91 @@
+from pathlib import Path
+
+import pandas as pd
+
+from data_loader import read_dataset
+
+
+def to_float(value, default=None):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def clean_column_name(name):
+    name = str(name).strip()
+
+    if not name:
+        return "converted_column"
+
+    name = name.replace(" ", "_")
+    name = name.replace("/", "_per_")
+    name = name.replace("^", "")
+    name = name.replace("-", "_")
+    name = name.replace(".", "_")
+
+    while "__" in name:
+        name = name.replace("__", "_")
+
+    return name.strip("_")
+
+
+def ensure_unique_column(df, column_name):
+    column_name = clean_column_name(column_name)
+
+    if column_name not in df.columns:
+        return column_name
+
+    index = 2
+
+    while f"{column_name}_{index}" in df.columns:
+        index += 1
+
+    return f"{column_name}_{index}"
+
+
+def convert_dataset_variables(
+    input_path,
+    output_path,
+    convert_potential=True,
+    potential_col="step_variable_value",
+    reference_offset_v=0.0,
+    ph_value=0.0,
+    potential_output_col="E_RHE",
+    convert_current=True,
+    current_col="Im_A",
+    electrode_area_cm2=1.0,
+    current_density_output_col="j_mA_cm2"
+):
+    df = read_dataset(input_path)
+
+    reference_offset_v = to_float(reference_offset_v, 0.0)
+    ph_value = to_float(ph_value, 0.0)
+    electrode_area_cm2 = to_float(electrode_area_cm2, 1.0)
+
+    if convert_potential:
+        if potential_col not in df.columns:
+            raise ValueError(f"Potential column not found: {potential_col}")
+
+        output_col = ensure_unique_column(df, potential_output_col)
+        potential = pd.to_numeric(df[potential_col], errors="coerce")
+
+        df[output_col] = potential + reference_offset_v + 0.05916 * ph_value
+
+    if convert_current:
+        if current_col not in df.columns:
+            raise ValueError(f"Current column not found: {current_col}")
+
+        if electrode_area_cm2 is None or electrode_area_cm2 <= 0:
+            raise ValueError("Electrode area must be larger than 0.")
+
+        output_col = ensure_unique_column(df, current_density_output_col)
+        current = pd.to_numeric(df[current_col], errors="coerce")
+
+        df[output_col] = current * 1000.0 / electrode_area_cm2
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_path, index=False)
+
+    return output_path
