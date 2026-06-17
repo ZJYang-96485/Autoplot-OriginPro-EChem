@@ -133,6 +133,26 @@ def format_step_value(value, decimal_places):
     return text
 
 
+def parse_csv_text(value):
+    if value in [None, ""]:
+        return []
+
+    return [item.strip() for item in str(value).split(",") if item.strip()]
+
+
+def parse_csv_ints(value):
+    items = parse_csv_text(value)
+    numbers = []
+
+    for item in items:
+        try:
+            numbers.append(int(item))
+        except ValueError:
+            continue
+
+    return numbers
+
+
 def apply_axis_limits(axis, axis_name, minimum=None, maximum=None):
     if axis_name == "x":
         current_min, current_max = axis.get_xlim()
@@ -772,7 +792,11 @@ def setup_step_axis(
     step_axis_label,
     max_ticks,
     decimal_places,
-    label_stride
+    label_stride,
+    custom_labels,
+    custom_indices,
+    label_rotation,
+    label_pad
 ):
     if step_value_col in [None, "", "none"]:
         return None
@@ -788,35 +812,82 @@ def setup_step_axis(
     if data.empty:
         return None
 
-    ticks = []
-    labels = []
+    records = []
 
-    for _, group in data.groupby(sequence_col, sort=True):
+    for sequence_value, group in data.groupby(sequence_col, sort=True):
         x_value = pd.to_numeric(group[x_col], errors="coerce").mean()
         step_value = pd.to_numeric(group[step_value_col], errors="coerce").mean()
 
         if pd.notna(x_value) and pd.notna(step_value):
-            ticks.append(x_value)
-            labels.append(format_step_value(step_value, decimal_places))
+            records.append({
+                "sequence": sequence_value,
+                "x": x_value,
+                "label": format_step_value(step_value, decimal_places)
+            })
+
+    if not records:
+        return None
+
+    custom_labels = parse_csv_text(custom_labels)
+    custom_indices = parse_csv_ints(custom_indices)
+
+    if custom_indices:
+        selected_records = []
+
+        for record in records:
+            try:
+                sequence_as_int = int(record["sequence"])
+            except (TypeError, ValueError):
+                continue
+
+            if sequence_as_int in custom_indices:
+                selected_records.append(record)
+
+        ticks = [record["x"] for record in selected_records]
+
+        if custom_labels:
+            labels = custom_labels[:len(ticks)]
+
+            if len(labels) < len(ticks):
+                labels += [record["label"] for record in selected_records[len(labels):]]
+        else:
+            labels = [record["label"] for record in selected_records]
+
+    elif custom_labels:
+        n_labels = min(len(custom_labels), len(records))
+
+        if n_labels == 1:
+            selected_positions = [0]
+        else:
+            selected_positions = [
+                round(i * (len(records) - 1) / (n_labels - 1))
+                for i in range(n_labels)
+            ]
+
+        selected_records = [records[index] for index in selected_positions]
+        ticks = [record["x"] for record in selected_records]
+        labels = custom_labels[:n_labels]
+
+    else:
+        max_ticks = max(2, max_ticks)
+        label_stride = max(1, label_stride)
+
+        if len(records[::label_stride]) > max_ticks:
+            label_stride = max(label_stride, int((len(records) + max_ticks - 1) / max_ticks))
+
+        selected_records = records[::label_stride]
+        ticks = [record["x"] for record in selected_records]
+        labels = [record["label"] for record in selected_records]
 
     if not ticks:
         return None
-
-    max_ticks = max(2, max_ticks)
-    label_stride = max(1, label_stride)
-
-    if len(ticks[::label_stride]) > max_ticks:
-        label_stride = max(label_stride, int((len(ticks) + max_ticks - 1) / max_ticks))
-
-    ticks = ticks[::label_stride]
-    labels = labels[::label_stride]
 
     top_axis = ax.secondary_xaxis("top")
     top_axis.set_xlabel(x_label if x_label else x_col)
 
     ax.set_xticks(ticks)
-    ax.set_xticklabels(labels, rotation=30, ha="right")
-    ax.set_xlabel(step_axis_label if step_axis_label else step_value_col)
+    ax.set_xticklabels(labels, rotation=label_rotation, ha="right")
+    ax.set_xlabel(step_axis_label if step_axis_label else step_value_col, labelpad=label_pad)
 
     return top_axis
 
@@ -891,7 +962,12 @@ def create_plot(
     y_major_interval,
     y_minor_interval,
     step_axis_decimal_places,
-    step_axis_label_stride
+    step_axis_label_stride,
+    step_axis_custom_labels,
+    step_axis_custom_indices,
+    step_axis_label_rotation,
+    step_axis_label_pad,
+    bottom_margin
 ):
     dataset = get_dataset(dataset_id)
 
@@ -996,6 +1072,9 @@ def create_plot(
 
     step_axis_decimal_places = clamp_int(step_axis_decimal_places, 1, 0, 6)
     step_axis_label_stride = clamp_int(step_axis_label_stride, 2, 1, 100)
+    step_axis_label_rotation = clamp_float(step_axis_label_rotation, 30, 0, 90)
+    step_axis_label_pad = clamp_float(step_axis_label_pad, 14, 0, 80)
+    bottom_margin = optional_float(bottom_margin)
 
     fig, ax = plt.subplots(figsize=(figure_width, figure_height), dpi=figure_dpi)
     axis_df = df
@@ -1142,7 +1221,11 @@ def create_plot(
             step_axis_label=step_axis_label,
             max_ticks=step_axis_max_ticks,
             decimal_places=step_axis_decimal_places,
-            label_stride=step_axis_label_stride
+            label_stride=step_axis_label_stride,
+            custom_labels=step_axis_custom_labels,
+            custom_indices=step_axis_custom_indices,
+            label_rotation=step_axis_label_rotation,
+            label_pad=step_axis_label_pad
         )
 
     if plot_title:
@@ -1167,7 +1250,10 @@ def create_plot(
         title_size=title_size
     )
 
-    ax.tick_params(axis="x", rotation=30)
+    if use_step_axis:
+        ax.tick_params(axis="x", rotation=step_axis_label_rotation)
+    else:
+        ax.tick_params(axis="x", rotation=30)
 
     if secondary_axis is not None:
         style_secondary_axis(
@@ -1231,6 +1317,9 @@ def create_plot(
         plt.tight_layout(rect=[0, 0.08, 1, 1])
     else:
         plt.tight_layout()
+
+    if bottom_margin is not None:
+        fig.subplots_adjust(bottom=bottom_margin)
 
     output_name = f"plot_{uuid.uuid4().hex[:12]}.png"
     output_path = PLOT_DIR / output_name
@@ -1634,6 +1723,11 @@ def plot():
     step_axis_max_ticks = request.form.get("step_axis_max_ticks", 12)
     step_axis_decimal_places = request.form.get("step_axis_decimal_places", 1)
     step_axis_label_stride = request.form.get("step_axis_label_stride", 2)
+    step_axis_custom_labels = request.form.get("step_axis_custom_labels", "").strip()
+    step_axis_custom_indices = request.form.get("step_axis_custom_indices", "").strip()
+    step_axis_label_rotation = request.form.get("step_axis_label_rotation", 30)
+    step_axis_label_pad = request.form.get("step_axis_label_pad", 14)
+    bottom_margin = request.form.get("bottom_margin", "")
 
     line_order = request.form.get("line_order", "original")
     show_markers = request.form.get("show_markers") == "on"
@@ -1722,6 +1816,11 @@ def plot():
         "step_axis_max_ticks": step_axis_max_ticks,
         "step_axis_decimal_places": step_axis_decimal_places,
         "step_axis_label_stride": step_axis_label_stride,
+        "step_axis_custom_labels": step_axis_custom_labels,
+        "step_axis_custom_indices": step_axis_custom_indices,
+        "step_axis_label_rotation": step_axis_label_rotation,
+        "step_axis_label_pad": step_axis_label_pad,
+        "bottom_margin": bottom_margin,
         "line_order": line_order,
         "show_markers": show_markers,
         "show_legend": show_legend,
@@ -1837,7 +1936,12 @@ def plot():
             y_major_interval=y_major_interval,
             y_minor_interval=y_minor_interval,
             step_axis_decimal_places=step_axis_decimal_places,
-            step_axis_label_stride=step_axis_label_stride
+            step_axis_label_stride=step_axis_label_stride,
+            step_axis_custom_labels=step_axis_custom_labels,
+            step_axis_custom_indices=step_axis_custom_indices,
+            step_axis_label_rotation=step_axis_label_rotation,
+            step_axis_label_pad=step_axis_label_pad,
+            bottom_margin=bottom_margin
         )
     except Exception as error:
         flash(str(error))

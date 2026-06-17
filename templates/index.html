@@ -484,12 +484,11 @@
                     <li>X label: <code>t / min</code></li>
                     <li>Y label: <code>j / mA cm⁻²</code></li>
                     <li>Step-axis label: <code>E / V vs. RHE</code></li>
+                    <li>Custom bottom labels: <code>0.5, 0.2, -0.1, -0.5, -0.9, -0.7, -0.3, 0, 0.4</code></li>
                     <li>Figure size: 8.2 × 5.3</li>
                     <li>X scale: 0 to 160, major interval 10</li>
                     <li>Y scale: -100 to 5, major interval 20</li>
-                    <li>Step label decimals: 1</li>
-                    <li>Ticks inward on all sides</li>
-                    <li>Full frame on</li>
+                    <li>Bottom margin: 0.24</li>
                 </ul>
             </div>
         </section>
@@ -700,6 +699,34 @@
                         <label for="step_axis_label_stride">Step-axis label stride</label>
                         <input type="number" id="step_axis_label_stride" name="step_axis_label_stride" min="1" max="100" step="1" value="{{ form_state.step_axis_label_stride or '2' }}">
                         <p class="hint">Larger stride shows fewer bottom labels.</p>
+                    </div>
+
+                    <div class="form-grid-full">
+                        <label for="step_axis_custom_labels">Custom bottom step-axis labels</label>
+                        <input type="text" id="step_axis_custom_labels" name="step_axis_custom_labels" value="{{ form_state.step_axis_custom_labels or '' }}" placeholder="0.5, 0.2, -0.1, -0.5, -0.9, -0.7, -0.3, 0, 0.4">
+                        <p class="hint">Optional. If filled, these labels override the automatically generated bottom labels.</p>
+                    </div>
+
+                    <div class="form-grid-full">
+                        <label for="step_axis_custom_indices">Custom sequence indices for bottom labels</label>
+                        <input type="text" id="step_axis_custom_indices" name="step_axis_custom_indices" value="{{ form_state.step_axis_custom_indices or '' }}" placeholder="1, 5, 9, 13, 17, 21, 25, 29, 32">
+                        <p class="hint">Optional. Use this if you want labels at exact sequence numbers. Leave empty to spread custom labels across the full time range.</p>
+                    </div>
+
+                    <div>
+                        <label for="step_axis_label_rotation">Bottom label rotation</label>
+                        <input type="number" id="step_axis_label_rotation" name="step_axis_label_rotation" min="0" max="90" step="1" value="{{ form_state.step_axis_label_rotation or '30' }}">
+                    </div>
+
+                    <div>
+                        <label for="step_axis_label_pad">Bottom axis label padding</label>
+                        <input type="number" id="step_axis_label_pad" name="step_axis_label_pad" min="0" max="80" step="1" value="{{ form_state.step_axis_label_pad or '14' }}">
+                    </div>
+
+                    <div>
+                        <label for="bottom_margin">Bottom margin</label>
+                        <input type="number" id="bottom_margin" name="bottom_margin" min="0.05" max="0.5" step="0.01" value="{{ form_state.bottom_margin or '' }}" placeholder="0.24">
+                        <p class="hint">Use 0.20–0.30 if bottom labels are crowded or clipped.</p>
                     </div>
 
                     <div class="form-grid-full">
@@ -1264,6 +1291,7 @@
                     <li>For stitched sequential data, use X = global_time_min.</li>
                     <li>After conversion, use Y = j_mA_cm2 and step value = E_RHE.</li>
                     <li>To show potential labels on the bottom axis, enable Step Variable Axis.</li>
+                    <li>Use custom bottom labels when remaking a published figure.</li>
                     <li>For paper-style plots, use full frame and inward ticks on all four sides.</li>
                     <li>Do not use secondary curve mode together with group, summary, or step-axis mode.</li>
                 </ul>
