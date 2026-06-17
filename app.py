@@ -71,6 +71,15 @@ def sanitize_color(value, default):
     return default
 
 
+def clamp_float(value, default, minimum, maximum):
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return default
+
+    return max(minimum, min(value, maximum))
+
+
 def safe_output_name(value, default_name):
     value = str(value).strip()
 
@@ -189,7 +198,21 @@ def suggest_plot_types(x_type, y_type):
     return ["scatter"]
 
 
-def plot_single_curve(ax, df, x_col, y_col, plot_type, marker_color, line_color, label):
+def plot_single_curve(
+    ax,
+    df,
+    x_col,
+    y_col,
+    plot_type,
+    marker_color,
+    line_color,
+    label,
+    line_order,
+    show_markers,
+    marker_size,
+    line_width,
+    opacity
+):
     if plot_type in ["scatter", "line", "bar", "box"] and y_col in [None, "", "none"]:
         raise ValueError("This plot type requires a Y variable.")
 
@@ -200,19 +223,29 @@ def plot_single_curve(ax, df, x_col, y_col, plot_type, marker_color, line_color,
             data[y_col],
             facecolor=marker_color,
             edgecolor=line_color,
-            alpha=0.75,
+            alpha=opacity,
+            s=marker_size,
             label=label if label else "Primary"
         )
 
     elif plot_type == "line":
-        data = df[[x_col, y_col]].dropna().sort_values(by=x_col)
+        data = df[[x_col, y_col]].dropna()
+
+        if line_order == "sort_x":
+            data = data.sort_values(by=x_col)
+
+        marker = "o" if show_markers else None
+
         ax.plot(
             data[x_col],
             data[y_col],
-            marker="o",
+            marker=marker,
             color=line_color,
             markerfacecolor=marker_color,
             markeredgecolor=line_color,
+            linewidth=line_width,
+            markersize=max(1, marker_size ** 0.5),
+            alpha=opacity,
             label=label if label else "Primary"
         )
 
@@ -224,6 +257,7 @@ def plot_single_curve(ax, df, x_col, y_col, plot_type, marker_color, line_color,
             grouped.values,
             color=marker_color,
             edgecolor=line_color,
+            alpha=opacity,
             label=label if label else "Primary"
         )
 
@@ -237,6 +271,7 @@ def plot_single_curve(ax, df, x_col, y_col, plot_type, marker_color, line_color,
         for patch in box["boxes"]:
             patch.set_facecolor(marker_color)
             patch.set_edgecolor(line_color)
+            patch.set_alpha(opacity)
 
         for item in box["whiskers"] + box["caps"] + box["medians"]:
             item.set_color(line_color)
@@ -249,6 +284,7 @@ def plot_single_curve(ax, df, x_col, y_col, plot_type, marker_color, line_color,
             counts.values,
             color=marker_color,
             edgecolor=line_color,
+            alpha=opacity,
             label=label if label else "Primary"
         )
 
@@ -259,6 +295,7 @@ def plot_single_curve(ax, df, x_col, y_col, plot_type, marker_color, line_color,
             bins=20,
             facecolor=marker_color,
             edgecolor=line_color,
+            alpha=opacity,
             label=label if label else "Primary"
         )
 
@@ -266,7 +303,19 @@ def plot_single_curve(ax, df, x_col, y_col, plot_type, marker_color, line_color,
         raise ValueError("Unsupported plot type.")
 
 
-def plot_grouped_curves(ax, df, x_col, y_col, group_col, plot_type):
+def plot_grouped_curves(
+    ax,
+    df,
+    x_col,
+    y_col,
+    group_col,
+    plot_type,
+    line_order,
+    show_markers,
+    marker_size,
+    line_width,
+    opacity
+):
     if plot_type not in ["line", "scatter"]:
         raise ValueError("Group-by plotting is only supported for line or scatter plots.")
 
@@ -285,22 +334,46 @@ def plot_grouped_curves(ax, df, x_col, y_col, group_col, plot_type):
             ax.scatter(
                 group[x_col],
                 group[y_col],
-                alpha=0.78,
+                alpha=opacity,
+                s=marker_size,
                 label=label
             )
         else:
-            group = group.sort_values(by=x_col)
+            if line_order == "sort_x":
+                group = group.sort_values(by=x_col)
+
+            marker = "o" if show_markers else None
+
             ax.plot(
                 group[x_col],
                 group[y_col],
-                marker="o",
-                linewidth=1.6,
+                marker=marker,
+                linewidth=line_width,
+                markersize=max(1, marker_size ** 0.5),
+                alpha=opacity,
                 label=label
             )
 
 
-def plot_secondary_line_or_scatter(ax, df, x_col, y_col, plot_type, marker_color, line_color, label):
-    data = df[[x_col, y_col]].dropna().sort_values(by=x_col)
+def plot_secondary_line_or_scatter(
+    ax,
+    df,
+    x_col,
+    y_col,
+    plot_type,
+    marker_color,
+    line_color,
+    label,
+    line_order,
+    show_markers,
+    marker_size,
+    line_width,
+    opacity
+):
+    data = df[[x_col, y_col]].dropna()
+
+    if line_order == "sort_x":
+        data = data.sort_values(by=x_col)
 
     if plot_type == "scatter":
         ax.scatter(
@@ -308,18 +381,24 @@ def plot_secondary_line_or_scatter(ax, df, x_col, y_col, plot_type, marker_color
             data[y_col],
             facecolor=marker_color,
             edgecolor=line_color,
-            alpha=0.75,
+            alpha=opacity,
+            s=marker_size,
             label=label if label else "Secondary"
         )
 
     else:
+        marker = "o" if show_markers else None
+
         ax.plot(
             data[x_col],
             data[y_col],
-            marker="o",
+            marker=marker,
             color=line_color,
             markerfacecolor=marker_color,
             markeredgecolor=line_color,
+            linewidth=line_width,
+            markersize=max(1, marker_size ** 0.5),
+            alpha=opacity,
             label=label if label else "Secondary"
         )
 
@@ -346,7 +425,13 @@ def create_plot(
     secondary_plot_type,
     second_marker_color,
     second_line_color,
-    second_label
+    second_label,
+    line_order,
+    show_markers,
+    show_legend,
+    marker_size,
+    line_width,
+    opacity
 ):
     dataset = get_dataset(dataset_id)
 
@@ -402,6 +487,11 @@ def create_plot(
     second_marker_color = sanitize_color(second_marker_color, "#9A4DFF")
     second_line_color = sanitize_color(second_line_color, "#9A4DFF")
 
+    line_order = "sort_x" if line_order == "sort_x" else "original"
+    marker_size = clamp_float(marker_size, 18, 1, 200)
+    line_width = clamp_float(line_width, 1.2, 0.1, 10)
+    opacity = clamp_float(opacity, 0.35, 0.05, 1.0)
+
     fig, ax = plt.subplots(figsize=(8, 5), dpi=150)
 
     if group_col is not None:
@@ -411,7 +501,12 @@ def create_plot(
             x_col=x_col,
             y_col=y_col,
             group_col=group_col,
-            plot_type=plot_type
+            plot_type=plot_type,
+            line_order=line_order,
+            show_markers=show_markers,
+            marker_size=marker_size,
+            line_width=line_width,
+            opacity=opacity
         )
     else:
         plot_single_curve(
@@ -422,7 +517,12 @@ def create_plot(
             plot_type=plot_type,
             marker_color=marker_color,
             line_color=line_color,
-            label=primary_label
+            label=primary_label,
+            line_order=line_order,
+            show_markers=show_markers,
+            marker_size=marker_size,
+            line_width=line_width,
+            opacity=opacity
         )
 
     final_x_label = x_label if x_label else x_col
@@ -453,7 +553,12 @@ def create_plot(
             plot_type=secondary_plot_type,
             marker_color=second_marker_color,
             line_color=second_line_color,
-            label=second_label
+            label=second_label,
+            line_order=line_order,
+            show_markers=show_markers,
+            marker_size=marker_size,
+            line_width=line_width,
+            opacity=opacity
         )
 
         secondary_axis.set_xlabel(top_x_label if top_x_label else x2_col)
@@ -474,7 +579,12 @@ def create_plot(
             plot_type=secondary_plot_type,
             marker_color=second_marker_color,
             line_color=second_line_color,
-            label=second_label
+            label=second_label,
+            line_order=line_order,
+            show_markers=show_markers,
+            marker_size=marker_size,
+            line_width=line_width,
+            opacity=opacity
         )
 
         secondary_axis.set_ylabel(right_y_label if right_y_label else y2_col)
@@ -494,7 +604,7 @@ def create_plot(
         handles += handles_secondary
         labels += labels_secondary
 
-    if handles and any(labels):
+    if show_legend and handles and any(labels):
         legend_title = group_label if group_col and group_label else group_col
         ax.legend(handles, labels, loc="best", title=legend_title)
 
@@ -768,6 +878,13 @@ def plot():
     group_col = request.form.get("group_col")
     group_label = request.form.get("group_label", "").strip()
 
+    line_order = request.form.get("line_order", "original")
+    show_markers = request.form.get("show_markers") == "on"
+    show_legend = request.form.get("show_legend") == "on"
+    marker_size = request.form.get("marker_size", 18)
+    line_width = request.form.get("line_width", 1.2)
+    opacity = request.form.get("opacity", 0.35)
+
     secondary_mode = request.form.get("secondary_mode", "none")
     x2_col = request.form.get("x2_col")
     y2_col = request.form.get("y2_col")
@@ -795,6 +912,12 @@ def plot():
         "primary_label": primary_label,
         "group_col": group_col,
         "group_label": group_label,
+        "line_order": line_order,
+        "show_markers": show_markers,
+        "show_legend": show_legend,
+        "marker_size": marker_size,
+        "line_width": line_width,
+        "opacity": opacity,
         "secondary_mode": secondary_mode,
         "x2_col": x2_col,
         "y2_col": y2_col,
@@ -829,7 +952,13 @@ def plot():
             secondary_plot_type=secondary_plot_type,
             second_marker_color=second_marker_color,
             second_line_color=second_line_color,
-            second_label=second_label
+            second_label=second_label,
+            line_order=line_order,
+            show_markers=show_markers,
+            show_legend=show_legend,
+            marker_size=marker_size,
+            line_width=line_width,
+            opacity=opacity
         )
     except Exception as error:
         flash(str(error))
