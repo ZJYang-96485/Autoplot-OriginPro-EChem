@@ -4,6 +4,7 @@ import json
 import uuid
 import re
 
+import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -13,6 +14,7 @@ from werkzeug.utils import secure_filename
 
 from data_loader import read_dataset, inspect_dataset, save_cleaned_dataset
 from data_combiner import combine_file_paths
+from sequential_tools import combine_sequential_file_paths
 
 
 app = Flask(__name__)
@@ -74,6 +76,15 @@ def sanitize_color(value, default):
 def clamp_float(value, default, minimum, maximum):
     try:
         value = float(value)
+    except (TypeError, ValueError):
+        return default
+
+    return max(minimum, min(value, maximum))
+
+
+def clamp_int(value, default, minimum, maximum):
+    try:
+        value = int(value)
     except (TypeError, ValueError):
         return default
 
@@ -198,6 +209,114 @@ def suggest_plot_types(x_type, y_type):
     return ["scatter"]
 
 
+def summary_value(series, method, tail_fraction):
+    series = series.dropna()
+
+    if series.empty:
+        return pd.NA
+
+    if method == "mean":
+        return series.mean()
+
+    if method == "median":
+        return series.median()
+
+    if method == "first":
+        return series.iloc[0]
+
+    if method == "last":
+        return series.iloc[-1]
+
+    if method == "min":
+        return series.min()
+
+    if method == "max":
+        return series.max()
+
+    if method == "mean_tail":
+        n_tail = max(1, int(len(series) * tail_fraction))
+        return series.tail(n_tail).mean()
+
+    return series.mean()
+
+
+def summarize_by_group(df, x_col, y_col, group_col, x_method, y_method, tail_fraction):
+    rows = []
+
+    keep_columns = [
+        "source_file",
+        "source_index",
+        "sequence_index",
+        "condition",
+        "dataset_label",
+        "replicate",
+        "step_variable_name",
+        "step_variable_value",
+        "step_label",
+        "global_time_min"
+    ]
+
+    for group_name, group in df.groupby(group_col, sort=False):
+        group = group.dropna(subset=[x_col, y_col])
+
+        if group.empty:
+            continue
+
+        row = {
+            group_col: group_name,
+            x_col: summary_value(pd.to_numeric(group[x_col], errors="coerce"), x_method, tail_fraction),
+            y_col: summary_value(pd.to_numeric(group[y_col], errors="coerce"), y_method, tail_fraction)
+        }
+
+        for column in keep_columns:
+            if column in group.columns and column not in row:
+                if column == "step_variable_value":
+                    row[column] = pd.to_numeric(group[column], errors="coerce").mean()
+                else:
+                    row[column] = group[column].iloc[0]
+
+        rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+def smooth_summary_data(df, x_col, y_col, window):
+    data = df[[x_col, y_col]].dropna().sort_values(by=x_col)
+
+    if len(data) < 3:
+        return data
+
+    window = min(window, len(data))
+
+    if window % 2 == 0:
+        window -= 1
+
+    if window < 3:
+        return data
+
+    smoothed = data.copy()
+    smoothed[y_col] = smoothed[y_col].rolling(
+        window=window,
+        center=True,
+        min_periods=1
+    ).mean()
+
+    return smoothed
+
+
+def order_data(data, x_col, line_order):
+    if line_order == "sort_x":
+        return data.sort_values(by=x_col)
+
+    if "sequence_index" in data.columns:
+        return data.sort_values(by="sequence_index")
+
+    if "source_index" in data.columns:
+        return data.sort_values(by="source_index")
+
+    return data
+
+
 def plot_single_curve(
     ax,
     df,
@@ -230,10 +349,7 @@ def plot_single_curve(
 
     elif plot_type == "line":
         data = df[[x_col, y_col]].dropna()
-
-        if line_order == "sort_x":
-            data = data.sort_values(by=x_col)
-
+        data = order_data(data, x_col, line_order)
         marker = "o" if show_markers else None
 
         ax.plot(
@@ -314,7 +430,10 @@ def plot_grouped_curves(
     show_markers,
     marker_size,
     line_width,
-    opacity
+    opacity,
+    marker_color,
+    line_color,
+    group_color_mode
 ):
     if plot_type not in ["line", "scatter"]:
         raise ValueError("Group-by plotting is only supported for line or scatter plots.")
@@ -324,6 +443,12 @@ def plot_grouped_curves(
 
     data = df[[x_col, y_col, group_col]].dropna()
 
+    if "sequence_index" in df.columns:
+        data = df[[x_col, y_col, group_col, "sequence_index"]].dropna(subset=[x_col, y_col, group_col])
+
+    if "source_index" in df.columns and "source_index" not in data.columns:
+        data = data.join(df["source_index"])
+
     if data.empty:
         raise ValueError("No valid data points were found for the selected group-by plot.")
 
@@ -331,28 +456,131 @@ def plot_grouped_curves(
         label = str(group_name)
 
         if plot_type == "scatter":
-            ax.scatter(
-                group[x_col],
-                group[y_col],
-                alpha=opacity,
-                s=marker_size,
-                label=label
-            )
+            if group_color_mode == "same":
+                ax.scatter(
+                    group[x_col],
+                    group[y_col],
+                    facecolor=marker_color,
+                    edgecolor=line_color,
+                    alpha=opacity,
+                    s=marker_size,
+                    label=label
+                )
+            else:
+                ax.scatter(
+                    group[x_col],
+                    group[y_col],
+                    alpha=opacity,
+                    s=marker_size,
+                    label=label
+                )
         else:
-            if line_order == "sort_x":
-                group = group.sort_values(by=x_col)
-
+            group = order_data(group, x_col, line_order)
             marker = "o" if show_markers else None
 
-            ax.plot(
-                group[x_col],
-                group[y_col],
-                marker=marker,
-                linewidth=line_width,
-                markersize=max(1, marker_size ** 0.5),
-                alpha=opacity,
-                label=label
-            )
+            if group_color_mode == "same":
+                ax.plot(
+                    group[x_col],
+                    group[y_col],
+                    marker=marker,
+                    color=line_color,
+                    markerfacecolor=marker_color,
+                    markeredgecolor=line_color,
+                    linewidth=line_width,
+                    markersize=max(1, marker_size ** 0.5),
+                    alpha=opacity,
+                    label=label
+                )
+            else:
+                ax.plot(
+                    group[x_col],
+                    group[y_col],
+                    marker=marker,
+                    linewidth=line_width,
+                    markersize=max(1, marker_size ** 0.5),
+                    alpha=opacity,
+                    label=label
+                )
+
+
+def plot_summary_curve(
+    ax,
+    summary_df,
+    x_col,
+    y_col,
+    fit_guide,
+    line_order,
+    show_markers,
+    marker_color,
+    line_color,
+    marker_size,
+    line_width,
+    opacity,
+    smooth_window,
+    label
+):
+    data = summary_df[[x_col, y_col]].dropna()
+
+    if data.empty:
+        raise ValueError("No summarized data points are available for plotting.")
+
+    if "sequence_index" in summary_df.columns:
+        data = summary_df[[x_col, y_col, "sequence_index"]].dropna(subset=[x_col, y_col])
+
+    data = order_data(data, x_col, line_order)
+
+    if fit_guide == "none":
+        ax.scatter(
+            data[x_col],
+            data[y_col],
+            facecolor=marker_color,
+            edgecolor=line_color,
+            s=marker_size,
+            alpha=opacity,
+            label=label if label else "Summary points"
+        )
+        return
+
+    if fit_guide == "connect":
+        marker = "o" if show_markers else None
+        ax.plot(
+            data[x_col],
+            data[y_col],
+            marker=marker,
+            color=line_color,
+            markerfacecolor=marker_color,
+            markeredgecolor=line_color,
+            linewidth=line_width,
+            markersize=max(1, marker_size ** 0.5),
+            alpha=opacity,
+            label=label if label else "Summary"
+        )
+        return
+
+    if fit_guide == "smooth":
+        ax.scatter(
+            data[x_col],
+            data[y_col],
+            facecolor=marker_color,
+            edgecolor=line_color,
+            s=marker_size,
+            alpha=max(0.3, opacity),
+            label=label if label else "Summary points"
+        )
+
+        smoothed = smooth_summary_data(data, x_col, y_col, smooth_window)
+
+        ax.plot(
+            smoothed[x_col],
+            smoothed[y_col],
+            color=line_color,
+            linewidth=line_width,
+            alpha=opacity,
+            label="Smooth guide"
+        )
+        return
+
+    raise ValueError("Unsupported fit guide option.")
 
 
 def plot_secondary_line_or_scatter(
@@ -371,9 +599,7 @@ def plot_secondary_line_or_scatter(
     opacity
 ):
     data = df[[x_col, y_col]].dropna()
-
-    if line_order == "sort_x":
-        data = data.sort_values(by=x_col)
+    data = order_data(data, x_col, line_order)
 
     if plot_type == "scatter":
         ax.scatter(
@@ -403,6 +629,49 @@ def plot_secondary_line_or_scatter(
         )
 
 
+def setup_step_axis(ax, axis_df, x_col, x_label, step_value_col, sequence_col, step_axis_label, max_ticks):
+    if step_value_col in [None, "", "none"]:
+        return
+
+    if sequence_col in [None, "", "none"]:
+        return
+
+    if step_value_col not in axis_df.columns or sequence_col not in axis_df.columns or x_col not in axis_df.columns:
+        return
+
+    data = axis_df[[x_col, step_value_col, sequence_col]].dropna()
+
+    if data.empty:
+        return
+
+    ticks = []
+    labels = []
+
+    for _, group in data.groupby(sequence_col, sort=True):
+        x_value = pd.to_numeric(group[x_col], errors="coerce").mean()
+        step_value = pd.to_numeric(group[step_value_col], errors="coerce").mean()
+
+        if pd.notna(x_value) and pd.notna(step_value):
+            ticks.append(x_value)
+            labels.append(f"{step_value:.3g}")
+
+    if not ticks:
+        return
+
+    max_ticks = max(2, max_ticks)
+    stride = max(1, int(len(ticks) / max_ticks))
+
+    ticks = ticks[::stride]
+    labels = labels[::stride]
+
+    top_axis = ax.secondary_xaxis("top")
+    top_axis.set_xlabel(x_label if x_label else x_col)
+
+    ax.set_xticks(ticks)
+    ax.set_xticklabels(labels, rotation=30, ha="right")
+    ax.set_xlabel(step_axis_label if step_axis_label else step_value_col)
+
+
 def create_plot(
     dataset_id,
     x_col,
@@ -417,6 +686,19 @@ def create_plot(
     primary_label,
     group_col,
     group_label,
+    group_color_mode,
+    data_reduction,
+    summary_group_col,
+    x_summary_method,
+    y_summary_method,
+    tail_fraction,
+    fit_guide,
+    smooth_window,
+    use_step_axis,
+    step_axis_value_col,
+    step_axis_sequence_col,
+    step_axis_label,
+    step_axis_max_ticks,
     secondary_mode,
     x2_col,
     y2_col,
@@ -442,6 +724,7 @@ def create_plot(
     df = read_dataset(data_path)
 
     group_col = None if group_col in [None, "", "none"] else group_col
+    summary_group_col = None if summary_group_col in [None, "", "none"] else summary_group_col
 
     if secondary_mode not in SECONDARY_MODES:
         raise ValueError("Invalid secondary mode.")
@@ -454,6 +737,19 @@ def create_plot(
 
     if group_col is not None and group_col not in df.columns:
         raise ValueError("Group-by column not found.")
+
+    if data_reduction == "summary":
+        secondary_mode = "none"
+        group_col = None
+
+        if summary_group_col is None:
+            raise ValueError("Summary mode requires a summary group column.")
+
+        if summary_group_col not in df.columns:
+            raise ValueError("Summary group column not found.")
+
+    if use_step_axis:
+        secondary_mode = "none"
 
     if group_col is not None and secondary_mode != "none":
         raise ValueError("Group-by plotting cannot be used together with secondary-axis mode.")
@@ -491,10 +787,45 @@ def create_plot(
     marker_size = clamp_float(marker_size, 18, 1, 200)
     line_width = clamp_float(line_width, 1.2, 0.1, 10)
     opacity = clamp_float(opacity, 0.35, 0.05, 1.0)
+    tail_fraction = clamp_float(tail_fraction, 0.2, 0.01, 1.0)
+    smooth_window = clamp_int(smooth_window, 5, 3, 99)
+    step_axis_max_ticks = clamp_int(step_axis_max_ticks, 12, 2, 64)
+    group_color_mode = "auto" if group_color_mode == "auto" else "same"
 
     fig, ax = plt.subplots(figsize=(8, 5), dpi=150)
+    axis_df = df
 
-    if group_col is not None:
+    if data_reduction == "summary":
+        summary_df = summarize_by_group(
+            df=df,
+            x_col=x_col,
+            y_col=y_col,
+            group_col=summary_group_col,
+            x_method=x_summary_method,
+            y_method=y_summary_method,
+            tail_fraction=tail_fraction
+        )
+
+        axis_df = summary_df
+
+        plot_summary_curve(
+            ax=ax,
+            summary_df=summary_df,
+            x_col=x_col,
+            y_col=y_col,
+            fit_guide=fit_guide,
+            line_order=line_order,
+            show_markers=show_markers,
+            marker_color=marker_color,
+            line_color=line_color,
+            marker_size=marker_size,
+            line_width=line_width,
+            opacity=opacity,
+            smooth_window=smooth_window,
+            label=primary_label
+        )
+
+    elif group_col is not None:
         plot_grouped_curves(
             ax=ax,
             df=df,
@@ -506,8 +837,12 @@ def create_plot(
             show_markers=show_markers,
             marker_size=marker_size,
             line_width=line_width,
-            opacity=opacity
+            opacity=opacity,
+            marker_color=marker_color,
+            line_color=line_color,
+            group_color_mode=group_color_mode
         )
+
     else:
         plot_single_curve(
             ax=ax,
@@ -588,6 +923,18 @@ def create_plot(
         )
 
         secondary_axis.set_ylabel(right_y_label if right_y_label else y2_col)
+
+    if use_step_axis:
+        setup_step_axis(
+            ax=ax,
+            axis_df=axis_df,
+            x_col=x_col,
+            x_label=final_x_label,
+            step_value_col=step_axis_value_col,
+            sequence_col=step_axis_sequence_col,
+            step_axis_label=step_axis_label,
+            max_ticks=step_axis_max_ticks
+        )
 
     if plot_title:
         ax.set_title(plot_title)
@@ -743,6 +1090,71 @@ def upload_batch_dataset():
     return redirect(url_for("index"))
 
 
+@app.route("/upload_sequence", methods=["POST"])
+def upload_sequence_dataset():
+    files = request.files.getlist("sequence_files")
+    files = [file for file in files if file and file.filename]
+
+    if not files:
+        flash("Please select at least one sequential data file.")
+        return redirect(url_for("index"))
+
+    for file in files:
+        if not is_supported_file(file.filename):
+            flash("Only .csv, .dat, .dta, and .txt files are supported for sequential upload.")
+            return redirect(url_for("index"))
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    raw_paths = []
+
+    for index, file in enumerate(files, start=1):
+        safe_name = secure_filename(file.filename)
+        raw_path = UPLOADED_DATA_DIR / f"{timestamp}_sequence_{index:03d}_{safe_name}"
+        file.save(raw_path)
+        raw_paths.append(raw_path)
+
+    sequence_name = request.form.get("sequence_name", "").strip()
+    sequence_condition = request.form.get("sequence_condition", "").strip()
+    sequence_time_col = request.form.get("sequence_time_col", "T_s").strip()
+    sequence_step_variable_col = request.form.get("sequence_step_variable_col", "Vf_V_vs_Ref").strip()
+    sequence_duration_s = request.form.get("sequence_duration_s", "300").strip()
+    sequence_regex = request.form.get("sequence_regex", r"#\s*(\d+)").strip()
+
+    if not sequence_condition:
+        sequence_condition = sequence_name if sequence_name else "Sequential condition"
+
+    output_stem = safe_output_name(sequence_name, f"sequential_combined_{timestamp}")
+    output_path = PROCESSED_DATA_DIR / f"{timestamp}_{output_stem}_sequential.csv"
+
+    try:
+        combine_sequential_file_paths(
+            file_paths=raw_paths,
+            output_path=output_path,
+            condition_label=sequence_condition,
+            dataset_label=sequence_name if sequence_name else sequence_condition,
+            time_col=sequence_time_col,
+            step_variable_col=sequence_step_variable_col,
+            step_duration_s=sequence_duration_s,
+            sequence_regex=sequence_regex
+        )
+    except Exception as error:
+        flash(f"Sequential files were uploaded, but stitching failed: {error}")
+        return redirect(url_for("index"))
+
+    description = sequence_name if sequence_name else "Sequential files stitched into one dataset."
+
+    register_dataset(
+        file_path=output_path,
+        dataset_type="sequential_data",
+        source=f"Sequential stitched upload: {len(raw_paths)} files",
+        uploaded_by="user",
+        description=description
+    )
+
+    flash("Sequential files uploaded and stitched successfully.")
+    return redirect(url_for("index"))
+
+
 @app.route("/combine_existing", methods=["POST"])
 def combine_existing_datasets():
     dataset_ids = request.form.getlist("combine_dataset_ids")
@@ -877,6 +1289,21 @@ def plot():
     primary_label = request.form.get("primary_label", "").strip()
     group_col = request.form.get("group_col")
     group_label = request.form.get("group_label", "").strip()
+    group_color_mode = request.form.get("group_color_mode", "same")
+
+    data_reduction = request.form.get("data_reduction", "raw")
+    summary_group_col = request.form.get("summary_group_col")
+    x_summary_method = request.form.get("x_summary_method", "mean")
+    y_summary_method = request.form.get("y_summary_method", "mean_tail")
+    tail_fraction = request.form.get("tail_fraction", 0.2)
+    fit_guide = request.form.get("fit_guide", "connect")
+    smooth_window = request.form.get("smooth_window", 5)
+
+    use_step_axis = request.form.get("use_step_axis") == "on"
+    step_axis_value_col = request.form.get("step_axis_value_col")
+    step_axis_sequence_col = request.form.get("step_axis_sequence_col", "sequence_index")
+    step_axis_label = request.form.get("step_axis_label", "").strip()
+    step_axis_max_ticks = request.form.get("step_axis_max_ticks", 12)
 
     line_order = request.form.get("line_order", "original")
     show_markers = request.form.get("show_markers") == "on"
@@ -898,6 +1325,9 @@ def plot():
     if group_col not in [None, "", "none"]:
         secondary_mode = "none"
 
+    if use_step_axis:
+        secondary_mode = "none"
+
     form_state = {
         "dataset_id": dataset_id,
         "x_col": x_col,
@@ -912,6 +1342,19 @@ def plot():
         "primary_label": primary_label,
         "group_col": group_col,
         "group_label": group_label,
+        "group_color_mode": group_color_mode,
+        "data_reduction": data_reduction,
+        "summary_group_col": summary_group_col,
+        "x_summary_method": x_summary_method,
+        "y_summary_method": y_summary_method,
+        "tail_fraction": tail_fraction,
+        "fit_guide": fit_guide,
+        "smooth_window": smooth_window,
+        "use_step_axis": use_step_axis,
+        "step_axis_value_col": step_axis_value_col,
+        "step_axis_sequence_col": step_axis_sequence_col,
+        "step_axis_label": step_axis_label,
+        "step_axis_max_ticks": step_axis_max_ticks,
         "line_order": line_order,
         "show_markers": show_markers,
         "show_legend": show_legend,
@@ -944,6 +1387,19 @@ def plot():
             primary_label=primary_label,
             group_col=group_col,
             group_label=group_label,
+            group_color_mode=group_color_mode,
+            data_reduction=data_reduction,
+            summary_group_col=summary_group_col,
+            x_summary_method=x_summary_method,
+            y_summary_method=y_summary_method,
+            tail_fraction=tail_fraction,
+            fit_guide=fit_guide,
+            smooth_window=smooth_window,
+            use_step_axis=use_step_axis,
+            step_axis_value_col=step_axis_value_col,
+            step_axis_sequence_col=step_axis_sequence_col,
+            step_axis_label=step_axis_label,
+            step_axis_max_ticks=step_axis_max_ticks,
             secondary_mode=secondary_mode,
             x2_col=x2_col,
             y2_col=y2_col,

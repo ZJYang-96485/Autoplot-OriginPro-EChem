@@ -195,6 +195,70 @@
                 "dataset_label",
                 "Over"
             ]
+        },
+        {
+            "dataset_id": "sequential_data_20260617_232738_sequential_combined_20260617_232738_sequential_dff7690e",
+            "file_name": "20260617_232738_sequential_combined_20260617_232738_sequential.csv",
+            "file_path": "C:\\Users\\Joe Yang\\AutoPlot-OriginPro-EChem\\Autoplot-OriginPro-EChem\\data_storage\\processed_data\\20260617_232738_sequential_combined_20260617_232738_sequential.csv",
+            "source": "Sequential stitched upload: 32 files",
+            "dataset_type": "sequential_data",
+            "uploaded_by": "user",
+            "created_at": "2026-06-17T23:27:38",
+            "description": "Sequential files stitched into one dataset.",
+            "rows": 9632,
+            "columns": 23,
+            "column_names": [
+                "source_file",
+                "source_path",
+                "source_index",
+                "sequence_index",
+                "condition",
+                "dataset_label",
+                "replicate",
+                "Pt",
+                "T_s",
+                "Vf_V_vs_Ref",
+                "Im_A",
+                "Vu_V",
+                "Sig_V",
+                "Ach_V",
+                "IERange",
+                "Over",
+                "Temp_deg_C",
+                "step_duration_s",
+                "global_time_s",
+                "global_time_min",
+                "step_variable_name",
+                "step_variable_value",
+                "step_label"
+            ],
+            "numeric_columns": [
+                "source_index",
+                "sequence_index",
+                "replicate",
+                "Pt",
+                "T_s",
+                "Vf_V_vs_Ref",
+                "Im_A",
+                "Vu_V",
+                "Sig_V",
+                "Ach_V",
+                "IERange",
+                "Temp_deg_C",
+                "step_duration_s",
+                "global_time_s",
+                "global_time_min",
+                "step_variable_value",
+                "step_label"
+            ],
+            "categorical_columns": [
+                "source_file",
+                "source_path",
+                "condition",
+                "dataset_label",
+                "Over",
+                "step_variable_name"
+            ]
         }
     ]
 }

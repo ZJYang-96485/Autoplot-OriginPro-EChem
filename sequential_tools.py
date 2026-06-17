@@ -1,0 +1,181 @@
+from pathlib import Path
+import re
+
+import pandas as pd
+
+from data_loader import read_dataset
+
+
+def extract_sequence_index(file_path, fallback_index, sequence_regex=r"#\s*(\d+)"):
+    file_name = Path(file_path).name
+    match = re.search(sequence_regex, file_name)
+
+    if match:
+        return int(match.group(1))
+
+    return fallback_index
+
+
+def protect_existing_column(df, column_name):
+    if column_name in df.columns:
+        new_name = f"original_{column_name}"
+        counter = 1
+
+        while new_name in df.columns:
+            counter += 1
+            new_name = f"original_{column_name}_{counter}"
+
+        df = df.rename(columns={column_name: new_name})
+
+    return df
+
+
+def parse_float_or_none(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def add_sequential_columns(
+    df,
+    file_path,
+    fallback_index,
+    condition_label,
+    dataset_label,
+    time_col,
+    step_variable_col,
+    step_duration_s,
+    sequence_regex
+):
+    df = df.copy()
+
+    protected_columns = [
+        "source_file",
+        "source_path",
+        "source_index",
+        "sequence_index",
+        "condition",
+        "dataset_label",
+        "replicate",
+        "global_time_s",
+        "global_time_min",
+        "step_duration_s",
+        "step_variable_name",
+        "step_variable_value",
+        "step_label"
+    ]
+
+    for column in protected_columns:
+        df = protect_existing_column(df, column)
+
+    sequence_index = extract_sequence_index(
+        file_path=file_path,
+        fallback_index=fallback_index,
+        sequence_regex=sequence_regex
+    )
+
+    df.insert(0, "source_file", Path(file_path).name)
+    df.insert(1, "source_path", str(file_path))
+    df.insert(2, "source_index", fallback_index)
+    df.insert(3, "sequence_index", sequence_index)
+    df.insert(4, "condition", condition_label)
+    df.insert(5, "dataset_label", dataset_label)
+    df.insert(6, "replicate", sequence_index)
+
+    duration = parse_float_or_none(step_duration_s)
+
+    if time_col in df.columns:
+        local_time = pd.to_numeric(df[time_col], errors="coerce")
+
+        if duration is None:
+            valid_time = local_time.dropna()
+
+            if len(valid_time) > 1:
+                duration = float(valid_time.max() - valid_time.min())
+            else:
+                duration = 300.0
+
+        df["step_duration_s"] = duration
+        df["global_time_s"] = local_time + (sequence_index - 1) * duration
+        df["global_time_min"] = df["global_time_s"] / 60.0
+    else:
+        if duration is None:
+            duration = 300.0
+
+        df["step_duration_s"] = duration
+        df["global_time_s"] = pd.NA
+        df["global_time_min"] = pd.NA
+
+    if step_variable_col in df.columns:
+        step_values = pd.to_numeric(df[step_variable_col], errors="coerce")
+        step_value = step_values.mean()
+
+        df["step_variable_name"] = step_variable_col
+        df["step_variable_value"] = step_value
+
+        if pd.notna(step_value):
+            df["step_label"] = f"{step_value:.4g}"
+        else:
+            df["step_label"] = ""
+    else:
+        df["step_variable_name"] = step_variable_col
+        df["step_variable_value"] = pd.NA
+        df["step_label"] = ""
+
+    return df
+
+
+def combine_sequential_file_paths(
+    file_paths,
+    output_path,
+    condition_label,
+    dataset_label,
+    time_col="T_s",
+    step_variable_col="Vf_V_vs_Ref",
+    step_duration_s=300,
+    sequence_regex=r"#\s*(\d+)"
+):
+    indexed_paths = []
+
+    for fallback_index, file_path in enumerate(file_paths, start=1):
+        sequence_index = extract_sequence_index(
+            file_path=file_path,
+            fallback_index=fallback_index,
+            sequence_regex=sequence_regex
+        )
+
+        indexed_paths.append((sequence_index, fallback_index, Path(file_path)))
+
+    indexed_paths = sorted(indexed_paths, key=lambda item: item[0])
+
+    frames = []
+
+    for _, fallback_index, file_path in indexed_paths:
+        df = read_dataset(file_path)
+
+        df = add_sequential_columns(
+            df=df,
+            file_path=file_path,
+            fallback_index=fallback_index,
+            condition_label=condition_label,
+            dataset_label=dataset_label,
+            time_col=time_col,
+            step_variable_col=step_variable_col,
+            step_duration_s=step_duration_s,
+            sequence_regex=sequence_regex
+        )
+
+        frames.append(df)
+
+    if not frames:
+        raise ValueError("No sequential files were available to combine.")
+
+    combined = pd.concat(frames, ignore_index=True, sort=False)
+    combined = combined.sort_values(["sequence_index", "global_time_s"], na_position="last")
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    combined.to_csv(output_path, index=False)
+
+    return output_path
