@@ -30,7 +30,7 @@
         }
 
         main {
-            max-width: 1100px;
+            max-width: 1150px;
             margin: 28px auto;
             padding: 0 24px 48px 24px;
         }
@@ -74,6 +74,11 @@
         textarea {
             min-height: 70px;
             resize: vertical;
+        }
+
+        input[type="checkbox"] {
+            width: auto;
+            margin-right: 8px;
         }
 
         input[type="color"] {
@@ -167,9 +172,39 @@
             display: none;
         }
 
+        .combine-list {
+            margin-top: 12px;
+            max-height: 310px;
+            overflow-y: auto;
+            border: 1px solid #d8dee8;
+            border-radius: 10px;
+            padding: 10px;
+            background: #fbfcfe;
+        }
+
+        .combine-row {
+            display: grid;
+            grid-template-columns: 24px 1.2fr 1fr 1fr;
+            gap: 10px;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid #e7ecf3;
+        }
+
+        .combine-row:last-child {
+            border-bottom: none;
+        }
+
+        .combine-name {
+            font-size: 13px;
+            color: #1f2933;
+            overflow-wrap: anywhere;
+        }
+
         @media (max-width: 820px) {
             .grid,
-            .form-grid {
+            .form-grid,
+            .combine-row {
                 grid-template-columns: 1fr;
             }
 
@@ -183,7 +218,7 @@
 <body>
 <header>
     <h1>AutoPlot OriginPro EChem</h1>
-    <p>Upload data, clean instrument files, select variables, customize graph style, and generate a preview plot.</p>
+    <p>Upload data, clean instrument files, combine datasets, customize graph style, and generate a preview plot.</p>
 </header>
 
 <main>
@@ -199,7 +234,7 @@
 
     <div class="grid">
         <section class="card">
-            <h2>Upload Dataset</h2>
+            <h2>Single File Upload</h2>
 
             <form action="{{ url_for('upload_dataset') }}" method="post" enctype="multipart/form-data">
                 <label for="dataset_name">Dataset name</label>
@@ -212,7 +247,52 @@
             </form>
 
             <p class="hint">Supported formats: .csv, .dat, .dta, .txt</p>
-            <p class="hint">Raw files are stored in uploaded_data. Cleaned CSV files are stored in processed_data.</p>
+        </section>
+
+        <section class="card">
+            <h2>Batch Upload and Combine</h2>
+
+            <form action="{{ url_for('upload_batch_dataset') }}" method="post" enctype="multipart/form-data">
+                <label for="batch_name">Combined dataset name</label>
+                <input type="text" id="batch_name" name="batch_name" placeholder="Example: PBS + NaNO3 1600 rpm">
+
+                <label for="batch_condition">Condition label for all files</label>
+                <input type="text" id="batch_condition" name="batch_condition" placeholder="Example: PBS + NaNO3">
+
+                <label for="dataset_files">Data files</label>
+                <input type="file" id="dataset_files" name="dataset_files" accept=".csv,.dat,.dta,.txt" multiple>
+
+                <button type="submit">Upload and Combine Files</button>
+            </form>
+
+            <p class="hint">Use this when several files belong to the same condition or replicate group.</p>
+        </section>
+
+        <section class="card full-width">
+            <h2>Combine Existing Datasets</h2>
+
+            <form action="{{ url_for('combine_existing_datasets') }}" method="post">
+                <label for="combined_existing_name">New combined dataset name</label>
+                <input type="text" id="combined_existing_name" name="combined_existing_name" placeholder="Example: PBS vs PBS + NaNO3 comparison">
+
+                <div class="combine-list">
+                    {% for dataset in datasets %}
+                        <div class="combine-row">
+                            <input type="checkbox" name="combine_dataset_ids" value="{{ dataset.dataset_id }}">
+                            <div class="combine-name">
+                                {{ dataset.file_name }}<br>
+                                <span class="hint">{{ dataset.dataset_type }}</span>
+                            </div>
+                            <input type="text" name="condition_{{ dataset.dataset_id }}" placeholder="Condition, e.g., PBS">
+                            <input type="text" name="dataset_label_{{ dataset.dataset_id }}" placeholder="Dataset label">
+                        </div>
+                    {% endfor %}
+                </div>
+
+                <button type="submit">Combine Selected Datasets</button>
+            </form>
+
+            <p class="hint">Use this to combine PBS and PBS + NaNO3 datasets into one long-format file. The new combined file will include source_file, condition, dataset_label, and replicate columns.</p>
         </section>
 
         <section class="card">
@@ -230,6 +310,19 @@
 
             <div id="dataset_info" class="dataset-info">
                 No dataset selected.
+            </div>
+        </section>
+
+        <section class="card">
+            <h2>Recommended Combined Plot Setup</h2>
+            <div class="dataset-info">
+                For comparison graphs, use a combined dataset and choose:
+                <ul class="small-list">
+                    <li>X variable: potential or time</li>
+                    <li>Y variable: current or current density</li>
+                    <li>Group by: condition</li>
+                    <li>Plot type: line or scatter</li>
+                </ul>
             </div>
         </section>
 
@@ -277,6 +370,17 @@
                     </div>
 
                     <div>
+                        <label for="group_col">Group by</label>
+                        <select id="group_col" name="group_col"></select>
+                        <p class="hint">Optional. Use condition or source_file to plot multiple curves.</p>
+                    </div>
+
+                    <div>
+                        <label for="group_label">Legend title</label>
+                        <input type="text" id="group_label" name="group_label" value="{{ form_state.group_label or '' }}" placeholder="Optional, e.g., Condition">
+                    </div>
+
+                    <div>
                         <label for="plot_title">Topic head</label>
                         <input type="text" id="plot_title" name="plot_title" value="{{ form_state.plot_title or '' }}" placeholder="Optional plot title">
                     </div>
@@ -293,7 +397,7 @@
 
                     <div class="form-grid-full">
                         <label for="primary_label">Primary curve label</label>
-                        <input type="text" id="primary_label" name="primary_label" value="{{ form_state.primary_label or '' }}" placeholder="Optional legend label, e.g., PBS">
+                        <input type="text" id="primary_label" name="primary_label" value="{{ form_state.primary_label or '' }}" placeholder="Optional legend label">
                     </div>
 
                     <div class="form-grid-full">
@@ -303,7 +407,7 @@
                             <option value="same_y_different_x" {% if form_state.secondary_mode == "same_y_different_x" %}selected{% endif %}>Y(X1) and Y(X2): same Y, different X</option>
                             <option value="same_x_different_y" {% if form_state.secondary_mode == "same_x_different_y" %}selected{% endif %}>Y1(X) and Y2(X): same X, different Y</option>
                         </select>
-                        <p class="hint">Optional. Only one secondary-axis logic is allowed at a time.</p>
+                        <p class="hint">Optional. Secondary-axis mode cannot be used together with Group by.</p>
                     </div>
 
                     <div id="secondary_options" class="form-grid-full secondary-box hidden">
@@ -311,13 +415,13 @@
                             <div id="x2_block">
                                 <label for="x2_col">Second X variable</label>
                                 <select id="x2_col" name="x2_col"></select>
-                                <p class="hint">Used only for Y(X1) and Y(X2). This variable uses the top X-axis.</p>
+                                <p class="hint">Used only for Y(X1) and Y(X2).</p>
                             </div>
 
                             <div id="y2_block">
                                 <label for="y2_col">Second Y variable</label>
                                 <select id="y2_col" name="y2_col"></select>
-                                <p class="hint">Used only for Y1(X) and Y2(X). This variable uses the right Y-axis.</p>
+                                <p class="hint">Used only for Y1(X) and Y2(X).</p>
                             </div>
 
                             <div id="top_x_label_block">
@@ -388,6 +492,8 @@
     const ySelect = document.getElementById("y_col");
     const x2Select = document.getElementById("x2_col");
     const y2Select = document.getElementById("y2_col");
+    const groupSelect = document.getElementById("group_col");
+    const groupLabelInput = document.getElementById("group_label");
     const plotTypeSelect = document.getElementById("plot_type");
     const xLabelInput = document.getElementById("x_label");
     const yLabelInput = document.getElementById("y_label");
@@ -433,6 +539,14 @@
         topXLabelBlock.classList.add("hidden");
         rightYLabelBlock.classList.add("hidden");
 
+        if (groupSelect.value !== "none") {
+            secondaryModeSelect.value = "none";
+            secondaryModeSelect.disabled = true;
+            return;
+        }
+
+        secondaryModeSelect.disabled = false;
+
         if (mode === "same_y_different_x") {
             secondaryOptions.classList.remove("hidden");
             x2Block.classList.remove("hidden");
@@ -452,6 +566,7 @@
             clearSelect(ySelect);
             clearSelect(x2Select);
             clearSelect(y2Select);
+            clearSelect(groupSelect);
             clearSelect(plotTypeSelect);
             return;
         }
@@ -465,10 +580,12 @@
                 clearSelect(ySelect);
                 clearSelect(x2Select);
                 clearSelect(y2Select);
+                clearSelect(groupSelect);
 
                 addOption(ySelect, "none", "None / count or histogram", formState.y_col);
                 addOption(x2Select, "none", "None", formState.x2_col);
                 addOption(y2Select, "none", "None", formState.y2_col);
+                addOption(groupSelect, "none", "None", formState.group_col);
 
                 data.column_names.forEach(column => {
                     const type = data.column_types[column];
@@ -477,6 +594,7 @@
                     addOption(ySelect, column, labelColumn(column, type), formState.y_col);
                     addOption(x2Select, column, labelColumn(column, type), formState.x2_col);
                     addOption(y2Select, column, labelColumn(column, type), formState.y2_col);
+                    addOption(groupSelect, column, labelColumn(column, type), formState.group_col);
                 });
 
                 if (!formState.x_col && data.numeric_columns.length > 0) {
@@ -485,6 +603,10 @@
 
                 if (!formState.y_col && data.numeric_columns.length > 1) {
                     ySelect.value = data.numeric_columns[1];
+                }
+
+                if (!formState.group_col && data.column_names.includes("condition")) {
+                    groupSelect.value = "condition";
                 }
 
                 if (!formState.x2_col && data.numeric_columns.length > 2) {
@@ -503,6 +625,10 @@
                     yLabelInput.value = ySelect.value;
                 }
 
+                if (!groupLabelInput.value && groupSelect.value && groupSelect.value !== "none") {
+                    groupLabelInput.value = groupSelect.value;
+                }
+
                 if (!topXLabelInput.value && x2Select.value && x2Select.value !== "none") {
                     topXLabelInput.value = x2Select.value;
                 }
@@ -512,6 +638,7 @@
                 }
 
                 updatePlotTypeOptions();
+                toggleSecondaryOptions();
             });
     }
 
@@ -568,11 +695,10 @@
                 <strong>Y type:</strong> ${data.y_type}<br>
                 <strong>Suggested plot types:</strong> ${data.plot_types.join(", ")}<br>
                 <ul class="small-list">
-                    <li>Numeric X + numeric Y: scatter or line</li>
-                    <li>Categorical X + numeric Y: bar or box</li>
-                    <li>Categorical X without Y: count</li>
-                    <li>Numeric X without Y: histogram</li>
-                    <li>Secondary mode supports only one logic: Y(X1)/Y(X2) or Y1(X)/Y2(X)</li>
+                    <li>Use Group by = condition to draw multiple curves from a combined dataset</li>
+                    <li>Group-by plotting supports line or scatter plots</li>
+                    <li>Secondary-axis mode supports only one logic: Y(X1)/Y(X2) or Y1(X)/Y2(X)</li>
+                    <li>Group by and secondary-axis mode cannot be used together</li>
                 </ul>
             `;
         });
@@ -583,11 +709,13 @@
         formState.y_col = null;
         formState.x2_col = null;
         formState.y2_col = null;
+        formState.group_col = null;
         formState.plot_type = null;
         xLabelInput.value = "";
         yLabelInput.value = "";
         topXLabelInput.value = "";
         rightYLabelInput.value = "";
+        groupLabelInput.value = "";
         loadDatasetColumns(datasetSelect.value);
     });
 
@@ -608,6 +736,14 @@
         }
 
         updatePlotTypeOptions();
+    });
+
+    groupSelect.addEventListener("change", () => {
+        if (groupSelect.value !== "none") {
+            groupLabelInput.value = groupSelect.value;
+        }
+
+        toggleSecondaryOptions();
     });
 
     x2Select.addEventListener("change", () => {

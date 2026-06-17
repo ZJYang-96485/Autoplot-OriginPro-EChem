@@ -12,6 +12,7 @@ from flask import Flask, render_template, request, redirect, url_for, jsonify, f
 from werkzeug.utils import secure_filename
 
 from data_loader import read_dataset, inspect_dataset, save_cleaned_dataset
+from data_combiner import combine_file_paths
 
 
 app = Flask(__name__)
@@ -68,6 +69,20 @@ def sanitize_color(value, default):
         return value
 
     return default
+
+
+def safe_output_name(value, default_name):
+    value = str(value).strip()
+
+    if not value:
+        return default_name
+
+    value = secure_filename(value)
+
+    if not value:
+        return default_name
+
+    return value
 
 
 def register_dataset(file_path, dataset_type, source, uploaded_by="user", description=""):
@@ -251,6 +266,39 @@ def plot_single_curve(ax, df, x_col, y_col, plot_type, marker_color, line_color,
         raise ValueError("Unsupported plot type.")
 
 
+def plot_grouped_curves(ax, df, x_col, y_col, group_col, plot_type):
+    if plot_type not in ["line", "scatter"]:
+        raise ValueError("Group-by plotting is only supported for line or scatter plots.")
+
+    if y_col in [None, "", "none"]:
+        raise ValueError("Group-by plotting requires a Y variable.")
+
+    data = df[[x_col, y_col, group_col]].dropna()
+
+    if data.empty:
+        raise ValueError("No valid data points were found for the selected group-by plot.")
+
+    for group_name, group in data.groupby(group_col, sort=False):
+        label = str(group_name)
+
+        if plot_type == "scatter":
+            ax.scatter(
+                group[x_col],
+                group[y_col],
+                alpha=0.78,
+                label=label
+            )
+        else:
+            group = group.sort_values(by=x_col)
+            ax.plot(
+                group[x_col],
+                group[y_col],
+                marker="o",
+                linewidth=1.6,
+                label=label
+            )
+
+
 def plot_secondary_line_or_scatter(ax, df, x_col, y_col, plot_type, marker_color, line_color, label):
     data = df[[x_col, y_col]].dropna().sort_values(by=x_col)
 
@@ -288,6 +336,8 @@ def create_plot(
     marker_color,
     line_color,
     primary_label,
+    group_col,
+    group_label,
     secondary_mode,
     x2_col,
     y2_col,
@@ -306,6 +356,8 @@ def create_plot(
     data_path = Path(dataset["file_path"])
     df = read_dataset(data_path)
 
+    group_col = None if group_col in [None, "", "none"] else group_col
+
     if secondary_mode not in SECONDARY_MODES:
         raise ValueError("Invalid secondary mode.")
 
@@ -314,6 +366,12 @@ def create_plot(
 
     if y_col and y_col != "none" and y_col not in df.columns:
         raise ValueError("Primary Y column not found.")
+
+    if group_col is not None and group_col not in df.columns:
+        raise ValueError("Group-by column not found.")
+
+    if group_col is not None and secondary_mode != "none":
+        raise ValueError("Group-by plotting cannot be used together with secondary-axis mode.")
 
     if secondary_mode != "none" and plot_type not in ["line", "scatter"]:
         raise ValueError("Secondary curve mode is only supported for line or scatter plots.")
@@ -346,16 +404,26 @@ def create_plot(
 
     fig, ax = plt.subplots(figsize=(8, 5), dpi=150)
 
-    plot_single_curve(
-        ax=ax,
-        df=df,
-        x_col=x_col,
-        y_col=y_col,
-        plot_type=plot_type,
-        marker_color=marker_color,
-        line_color=line_color,
-        label=primary_label
-    )
+    if group_col is not None:
+        plot_grouped_curves(
+            ax=ax,
+            df=df,
+            x_col=x_col,
+            y_col=y_col,
+            group_col=group_col,
+            plot_type=plot_type
+        )
+    else:
+        plot_single_curve(
+            ax=ax,
+            df=df,
+            x_col=x_col,
+            y_col=y_col,
+            plot_type=plot_type,
+            marker_color=marker_color,
+            line_color=line_color,
+            label=primary_label
+        )
 
     final_x_label = x_label if x_label else x_col
 
@@ -427,7 +495,8 @@ def create_plot(
         labels += labels_secondary
 
     if handles and any(labels):
-        ax.legend(handles, labels, loc="best")
+        legend_title = group_label if group_col and group_label else group_col
+        ax.legend(handles, labels, loc="best", title=legend_title)
 
     if bottom_annotation:
         fig.text(
@@ -506,6 +575,131 @@ def upload_dataset():
     return redirect(url_for("index"))
 
 
+@app.route("/upload_batch", methods=["POST"])
+def upload_batch_dataset():
+    files = request.files.getlist("dataset_files")
+    files = [file for file in files if file and file.filename]
+
+    if not files:
+        flash("Please select at least one data file.")
+        return redirect(url_for("index"))
+
+    for file in files:
+        if not is_supported_file(file.filename):
+            flash("Only .csv, .dat, .dta, and .txt files are supported for batch upload.")
+            return redirect(url_for("index"))
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    raw_paths = []
+
+    for index, file in enumerate(files, start=1):
+        safe_name = secure_filename(file.filename)
+        raw_path = UPLOADED_DATA_DIR / f"{timestamp}_{index:03d}_{safe_name}"
+        file.save(raw_path)
+        raw_paths.append(raw_path)
+
+    batch_name = request.form.get("batch_name", "").strip()
+    condition_label = request.form.get("batch_condition", "").strip()
+
+    output_stem = safe_output_name(batch_name, f"batch_combined_{timestamp}")
+    output_path = PROCESSED_DATA_DIR / f"{timestamp}_{output_stem}_combined.csv"
+
+    condition_labels = None
+
+    if condition_label:
+        condition_labels = [condition_label] * len(raw_paths)
+
+    try:
+        combine_file_paths(
+            file_paths=raw_paths,
+            output_path=output_path,
+            condition_labels=condition_labels
+        )
+    except Exception as error:
+        flash(f"Batch upload saved raw files, but combining failed: {error}")
+        return redirect(url_for("index"))
+
+    description = batch_name if batch_name else "Batch uploaded and combined dataset."
+
+    register_dataset(
+        file_path=output_path,
+        dataset_type="combined_data",
+        source=f"Batch combined upload: {len(raw_paths)} files",
+        uploaded_by="user",
+        description=description
+    )
+
+    flash("Batch files uploaded, cleaned, and combined successfully.")
+    return redirect(url_for("index"))
+
+
+@app.route("/combine_existing", methods=["POST"])
+def combine_existing_datasets():
+    dataset_ids = request.form.getlist("combine_dataset_ids")
+
+    if len(dataset_ids) < 2:
+        flash("Please select at least two datasets to combine.")
+        return redirect(url_for("index"))
+
+    selected_datasets = []
+    file_paths = []
+    condition_labels = []
+    dataset_labels = []
+
+    for dataset_id in dataset_ids:
+        dataset = get_dataset(dataset_id)
+
+        if dataset is None:
+            continue
+
+        condition = request.form.get(f"condition_{dataset_id}", "").strip()
+        dataset_label = request.form.get(f"dataset_label_{dataset_id}", "").strip()
+
+        if not condition:
+            condition = dataset.get("description") or Path(dataset["file_path"]).stem
+
+        if not dataset_label:
+            dataset_label = dataset.get("file_name") or Path(dataset["file_path"]).stem
+
+        selected_datasets.append(dataset)
+        file_paths.append(Path(dataset["file_path"]))
+        condition_labels.append(condition)
+        dataset_labels.append(dataset_label)
+
+    if len(file_paths) < 2:
+        flash("At least two valid datasets are required for combining.")
+        return redirect(url_for("index"))
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    combined_name = request.form.get("combined_existing_name", "").strip()
+    output_stem = safe_output_name(combined_name, f"selected_combined_{timestamp}")
+    output_path = PROCESSED_DATA_DIR / f"{timestamp}_{output_stem}_combined.csv"
+
+    try:
+        combine_file_paths(
+            file_paths=file_paths,
+            output_path=output_path,
+            condition_labels=condition_labels,
+            dataset_labels=dataset_labels
+        )
+    except Exception as error:
+        flash(f"Combining selected datasets failed: {error}")
+        return redirect(url_for("index"))
+
+    description = combined_name if combined_name else "Combined from selected existing datasets."
+
+    register_dataset(
+        file_path=output_path,
+        dataset_type="combined_data",
+        source=f"Combined from {len(selected_datasets)} existing datasets",
+        uploaded_by="user",
+        description=description
+    )
+
+    flash("Selected datasets combined successfully.")
+    return redirect(url_for("index"))
+
+
 @app.route("/dataset/<dataset_id>/columns", methods=["GET"])
 def dataset_columns(dataset_id):
     dataset = get_dataset(dataset_id)
@@ -571,6 +765,8 @@ def plot():
     marker_color = request.form.get("marker_color", "#FF5F05")
     line_color = request.form.get("line_color", "#13294B")
     primary_label = request.form.get("primary_label", "").strip()
+    group_col = request.form.get("group_col")
+    group_label = request.form.get("group_label", "").strip()
 
     secondary_mode = request.form.get("secondary_mode", "none")
     x2_col = request.form.get("x2_col")
@@ -581,6 +777,9 @@ def plot():
     second_marker_color = request.form.get("second_marker_color", "#9A4DFF")
     second_line_color = request.form.get("second_line_color", "#9A4DFF")
     second_label = request.form.get("second_label", "").strip()
+
+    if group_col not in [None, "", "none"]:
+        secondary_mode = "none"
 
     form_state = {
         "dataset_id": dataset_id,
@@ -594,6 +793,8 @@ def plot():
         "marker_color": marker_color,
         "line_color": line_color,
         "primary_label": primary_label,
+        "group_col": group_col,
+        "group_label": group_label,
         "secondary_mode": secondary_mode,
         "x2_col": x2_col,
         "y2_col": y2_col,
@@ -618,6 +819,8 @@ def plot():
             marker_color=marker_color,
             line_color=line_color,
             primary_label=primary_label,
+            group_col=group_col,
+            group_label=group_label,
             secondary_mode=secondary_mode,
             x2_col=x2_col,
             y2_col=y2_col,

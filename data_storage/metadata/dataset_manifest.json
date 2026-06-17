@@ -107,6 +107,44 @@
             "categorical_columns": [
                 "Over"
             ]
+        },
+        {
+            "dataset_id": "processed_data_20260617_221119_PBSNO3-layers--rpm_1600CHRONOA_B_13_cleaned_2d85b8b0",
+            "file_name": "20260617_221119_PBSNO3-layers--rpm_1600CHRONOA_B_13_cleaned.csv",
+            "file_path": "C:\\Users\\Joe Yang\\AutoPlot-OriginPro-EChem\\Autoplot-OriginPro-EChem\\data_storage\\processed_data\\20260617_221119_PBSNO3-layers--rpm_1600CHRONOA_B_13_cleaned.csv",
+            "source": "Cleaned from PBSNO3-layers--rpm_1600CHRONOA_B_13.DTA",
+            "dataset_type": "processed_data",
+            "uploaded_by": "user",
+            "created_at": "2026-06-17T22:11:19",
+            "description": "1600",
+            "rows": 301,
+            "columns": 10,
+            "column_names": [
+                "Pt",
+                "T_s",
+                "Vf_V_vs_Ref",
+                "Im_A",
+                "Vu_V",
+                "Sig_V",
+                "Ach_V",
+                "IERange",
+                "Over",
+                "Temp_deg_C"
+            ],
+            "numeric_columns": [
+                "Pt",
+                "T_s",
+                "Vf_V_vs_Ref",
+                "Im_A",
+                "Vu_V",
+                "Sig_V",
+                "Ach_V",
+                "IERange",
+                "Temp_deg_C"
+            ],
+            "categorical_columns": [
+                "Over"
+            ]
         }
     ]
 }
