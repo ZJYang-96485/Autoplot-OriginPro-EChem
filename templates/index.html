@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>AutoPlot OriginPro EChem</title>
+
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -127,6 +128,12 @@
             grid-column: 1 / -1;
         }
 
+        .small-list {
+            margin-top: 8px;
+            padding-left: 18px;
+            color: #3b4754;
+        }
+
         @media (max-width: 820px) {
             .grid {
                 grid-template-columns: 1fr;
@@ -138,7 +145,7 @@
 <body>
 <header>
     <h1>AutoPlot OriginPro EChem</h1>
-    <p>Upload CSV data, select variables, choose a suitable plot type, and generate a preview plot.</p>
+    <p>Upload data, clean instrument files, select variables, choose a suitable plot type, and generate a preview plot.</p>
 </header>
 
 <main>
@@ -154,19 +161,20 @@
 
     <div class="grid">
         <section class="card">
-            <h2>Upload CSV Dataset</h2>
+            <h2>Upload Dataset</h2>
 
             <form action="{{ url_for('upload_dataset') }}" method="post" enctype="multipart/form-data">
                 <label for="dataset_name">Dataset name</label>
-                <input type="text" id="dataset_name" name="dataset_name" placeholder="Example: ORR LSV test data">
+                <input type="text" id="dataset_name" name="dataset_name" placeholder="Example: 1600 rpm chronoamperometry">
 
-                <label for="dataset_file">CSV file</label>
-                <input type="file" id="dataset_file" name="dataset_file" accept=".csv">
+                <label for="dataset_file">Data file</label>
+                <input type="file" id="dataset_file" name="dataset_file" accept=".csv,.dat,.dta,.txt">
 
-                <button type="submit">Upload Dataset</button>
+                <button type="submit">Upload and Clean Dataset</button>
             </form>
 
-            <p class="hint">Only .csv files are supported in Version 1.</p>
+            <p class="hint">Supported formats: .csv, .dat, .dta, .txt</p>
+            <p class="hint">Raw files are stored in uploaded_data. Cleaned CSV files are stored in processed_data.</p>
         </section>
 
         <section class="card">
@@ -248,8 +256,8 @@
 
     let currentColumnTypes = {};
 
-    function labelColumn(col, type) {
-        return `${col} (${type})`;
+    function labelColumn(column, type) {
+        return `${column} (${type})`;
     }
 
     function clearSelect(select) {
@@ -284,12 +292,12 @@
                 clearSelect(xSelect);
                 clearSelect(ySelect);
 
-                addOption(ySelect, "none", "None / count plot", formState.y_col);
+                addOption(ySelect, "none", "None / count or histogram", formState.y_col);
 
-                data.column_names.forEach(col => {
-                    const type = data.column_types[col];
-                    addOption(xSelect, col, labelColumn(col, type), formState.x_col);
-                    addOption(ySelect, col, labelColumn(col, type), formState.y_col);
+                data.column_names.forEach(column => {
+                    const type = data.column_types[column];
+                    addOption(xSelect, column, labelColumn(column, type), formState.x_col);
+                    addOption(ySelect, column, labelColumn(column, type), formState.y_col);
                 });
 
                 if (!formState.x_col && data.numeric_columns.length > 0) {
@@ -323,6 +331,9 @@
             .then(data => {
                 datasetInfo.innerHTML = `
                     <strong>File:</strong> ${data.file_name}<br>
+                    <strong>Type:</strong> ${data.dataset_type}<br>
+                    <strong>Source:</strong> ${data.source}<br>
+                    <strong>Description:</strong> ${data.description || "None"}<br>
                     <strong>Rows:</strong> ${data.rows}<br>
                     <strong>Columns:</strong> ${data.columns}<br>
                     <strong>Numeric columns:</strong> ${data.numeric_columns.join(", ") || "None"}<br>
@@ -360,7 +371,13 @@
             plotHint.innerHTML = `
                 <strong>X type:</strong> ${data.x_type}<br>
                 <strong>Y type:</strong> ${data.y_type}<br>
-                <strong>Suggested plot types:</strong> ${data.plot_types.join(", ")}
+                <strong>Suggested plot types:</strong> ${data.plot_types.join(", ")}<br>
+                <ul class="small-list">
+                    <li>Numeric X + numeric Y: scatter or line</li>
+                    <li>Categorical X + numeric Y: bar or box</li>
+                    <li>Categorical X without Y: count</li>
+                    <li>Numeric X without Y: histogram</li>
+                </ul>
             `;
         });
     }
@@ -385,7 +402,13 @@
 
     ySelect.addEventListener("change", () => {
         if (ySelect.value === "none") {
-            yLabelInput.value = "Count";
+            const xType = currentColumnTypes[xSelect.value];
+
+            if (xType === "numeric") {
+                yLabelInput.value = "Count";
+            } else {
+                yLabelInput.value = "Count";
+            }
         } else {
             yLabelInput.value = ySelect.value;
         }

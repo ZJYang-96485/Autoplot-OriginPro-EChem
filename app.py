@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 from flask import Flask, render_template, request, redirect, url_for, jsonify, flash
 from werkzeug.utils import secure_filename
 
+from data_loader import read_dataset, inspect_dataset, save_cleaned_dataset
+
 
 app = Flask(__name__)
 app.secret_key = "dev"
@@ -24,7 +26,7 @@ METADATA_DIR = DATA_STORAGE_DIR / "metadata"
 MANIFEST_PATH = METADATA_DIR / "dataset_manifest.json"
 PLOT_DIR = BASE_DIR / "static" / "generated_plots"
 
-ALLOWED_EXTENSIONS = {"csv"}
+ALLOWED_EXTENSIONS = {"csv", "dat", "dta", "txt"}
 
 
 def create_dirs():
@@ -56,41 +58,26 @@ def write_manifest(manifest):
         json.dump(manifest, file, indent=4)
 
 
-def is_csv(filename):
+def is_supported_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
-def inspect_csv(csv_path):
-    df = pd.read_csv(csv_path)
-
-    numeric_columns = df.select_dtypes(include="number").columns.tolist()
-    categorical_columns = [col for col in df.columns if col not in numeric_columns]
-
-    return {
-        "rows": int(len(df)),
-        "columns": int(len(df.columns)),
-        "column_names": df.columns.tolist(),
-        "numeric_columns": numeric_columns,
-        "categorical_columns": categorical_columns
-    }
-
-
-def register_dataset(csv_path, dataset_type, source, uploaded_by="user", description=""):
+def register_dataset(file_path, dataset_type, source, uploaded_by="user", description=""):
     manifest = read_manifest()
-    csv_info = inspect_csv(csv_path)
+    data_info = inspect_dataset(file_path)
 
-    dataset_id = f"{dataset_type}_{csv_path.stem}_{uuid.uuid4().hex[:8]}"
+    dataset_id = f"{dataset_type}_{Path(file_path).stem}_{uuid.uuid4().hex[:8]}"
 
     dataset_info = {
         "dataset_id": dataset_id,
-        "file_name": csv_path.name,
-        "file_path": str(csv_path),
+        "file_name": Path(file_path).name,
+        "file_path": str(file_path),
         "source": source,
         "dataset_type": dataset_type,
         "uploaded_by": uploaded_by,
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "description": description,
-        **csv_info
+        **data_info
     }
 
     manifest["datasets"].append(dataset_info)
@@ -101,12 +88,17 @@ def register_dataset(csv_path, dataset_type, source, uploaded_by="user", descrip
 
 def register_test_data_if_needed():
     manifest = read_manifest()
-    existing_paths = {Path(item["file_path"]).resolve() for item in manifest["datasets"] if Path(item["file_path"]).exists()}
+    existing_paths = set()
+
+    for item in manifest["datasets"]:
+        file_path = Path(item.get("file_path", ""))
+        if file_path.exists():
+            existing_paths.add(file_path.resolve())
 
     for csv_path in TEST_DATA_DIR.glob("*.csv"):
         if csv_path.resolve() not in existing_paths:
             register_dataset(
-                csv_path=csv_path,
+                file_path=csv_path,
                 dataset_type="test_data",
                 source="Built-in test dataset",
                 uploaded_by="system",
@@ -119,8 +111,10 @@ def get_datasets():
     manifest = read_manifest()
 
     datasets = []
+
     for item in manifest["datasets"]:
-        file_path = Path(item["file_path"])
+        file_path = Path(item.get("file_path", ""))
+
         if file_path.exists():
             datasets.append(item)
 
@@ -143,11 +137,11 @@ def get_column_types(dataset):
 
     column_types = {}
 
-    for col in numeric_columns:
-        column_types[col] = "numeric"
+    for column in numeric_columns:
+        column_types[column] = "numeric"
 
-    for col in categorical_columns:
-        column_types[col] = "categorical"
+    for column in categorical_columns:
+        column_types[column] = "categorical"
 
     return column_types
 
@@ -165,6 +159,9 @@ def suggest_plot_types(x_type, y_type):
     if x_type == "categorical" and y_type == "categorical":
         return ["count"]
 
+    if x_type == "numeric" and y_type in ["none", None, ""]:
+        return ["histogram"]
+
     return ["scatter"]
 
 
@@ -174,8 +171,8 @@ def create_plot(dataset_id, x_col, y_col, x_label, y_label, plot_type):
     if dataset is None:
         raise ValueError("Dataset not found.")
 
-    csv_path = Path(dataset["file_path"])
-    df = pd.read_csv(csv_path)
+    data_path = Path(dataset["file_path"])
+    df = read_dataset(data_path)
 
     if x_col not in df.columns:
         raise ValueError("X column not found.")
@@ -200,22 +197,32 @@ def create_plot(dataset_id, x_col, y_col, x_label, y_label, plot_type):
 
     elif plot_type == "box":
         data = df[[x_col, y_col]].dropna()
-        groups = [group[y_col].values for _, group in data.groupby(x_col)]
-        labels = [str(name) for name, _ in data.groupby(x_col)]
+        grouped = data.groupby(x_col)
+        groups = [group[y_col].values for _, group in grouped]
+        labels = [str(name) for name, _ in grouped]
         ax.boxplot(groups, labels=labels)
 
     elif plot_type == "count":
         data = df[[x_col]].dropna()
         counts = data[x_col].astype(str).value_counts()
         ax.bar(counts.index, counts.values, color="#FF5F05", edgecolor="#13294B")
-        if not y_label:
-            y_label = "Count"
+        y_label = y_label if y_label else "Count"
+
+    elif plot_type == "histogram":
+        data = df[[x_col]].dropna()
+        ax.hist(data[x_col], bins=20, facecolor="#FF5F05", edgecolor="#13294B")
+        y_label = y_label if y_label else "Count"
 
     else:
         raise ValueError("Unsupported plot type.")
 
     ax.set_xlabel(x_label if x_label else x_col)
-    ax.set_ylabel(y_label if y_label else y_col)
+
+    if plot_type in ["count", "histogram"]:
+        ax.set_ylabel(y_label if y_label else "Count")
+    else:
+        ax.set_ylabel(y_label if y_label else y_col)
+
     ax.set_title(f"{plot_type.capitalize()} plot")
     ax.grid(True, alpha=0.25)
 
@@ -224,6 +231,7 @@ def create_plot(dataset_id, x_col, y_col, x_label, y_label, plot_type):
 
     output_name = f"plot_{uuid.uuid4().hex[:12]}.png"
     output_path = PLOT_DIR / output_name
+
     fig.savefig(output_path)
     plt.close(fig)
 
@@ -248,31 +256,40 @@ def upload_dataset():
     file = request.files.get("dataset_file")
 
     if file is None or file.filename == "":
-        flash("Please select a CSV file.")
+        flash("Please select a data file.")
         return redirect(url_for("index"))
 
-    if not is_csv(file.filename):
-        flash("Only .csv files are supported for now.")
+    if not is_supported_file(file.filename):
+        flash("Only .csv, .dat, .dta, and .txt files are supported for now.")
         return redirect(url_for("index"))
 
     safe_name = secure_filename(file.filename)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = UPLOADED_DATA_DIR / f"{timestamp}_{safe_name}"
+    raw_path = UPLOADED_DATA_DIR / f"{timestamp}_{safe_name}"
 
-    file.save(output_path)
+    file.save(raw_path)
+
+    cleaned_name = f"{timestamp}_{Path(safe_name).stem}_cleaned.csv"
+    cleaned_path = PROCESSED_DATA_DIR / cleaned_name
+
+    try:
+        save_cleaned_dataset(raw_path, cleaned_path)
+    except Exception as error:
+        flash(f"File uploaded, but cleaning failed: {error}")
+        return redirect(url_for("index"))
 
     dataset_name = request.form.get("dataset_name", "").strip()
-    description = dataset_name if dataset_name else "User-uploaded CSV dataset."
+    description = dataset_name if dataset_name else "User-uploaded and cleaned dataset."
 
     register_dataset(
-        csv_path=output_path,
-        dataset_type="uploaded_data",
-        source="User upload",
+        file_path=cleaned_path,
+        dataset_type="processed_data",
+        source=f"Cleaned from {safe_name}",
         uploaded_by="user",
         description=description
     )
 
-    flash("Dataset uploaded successfully.")
+    flash("Dataset uploaded and cleaned successfully.")
     return redirect(url_for("index"))
 
 
@@ -293,7 +310,10 @@ def dataset_columns(dataset_id):
         "column_names": dataset["column_names"],
         "numeric_columns": dataset["numeric_columns"],
         "categorical_columns": dataset["categorical_columns"],
-        "column_types": column_types
+        "column_types": column_types,
+        "description": dataset.get("description", ""),
+        "source": dataset.get("source", ""),
+        "dataset_type": dataset.get("dataset_type", "")
     })
 
 
