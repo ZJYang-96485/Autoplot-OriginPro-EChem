@@ -847,9 +847,10 @@ def setup_step_axis(
                 x_start + index * (x_end - x_start) / (len(labels_from_user) - 1)
                 for index in range(len(labels_from_user))
             ]
+        label_alignment = "center" if float(label_rotation) == 0 else "right"
 
         ax.set_xticks(ticks)
-        ax.set_xticklabels(labels_from_user, rotation=label_rotation, ha="right")
+        ax.set_xticklabels(labels_from_user, rotation=label_rotation, ha=label_alignment)
         ax.set_xlabel(step_axis_label if step_axis_label else step_value_col, labelpad=label_pad)
 
         return top_axis
@@ -874,6 +875,8 @@ def setup_step_axis(
     selected_records = records[::label_stride]
     ticks = [record["x"] for record in selected_records]
     labels = [record["label"] for record in selected_records]
+    
+    label_alignment = "center" if float(label_rotation) == 0 else "right"
 
     ax.set_xticks(ticks)
     ax.set_xticklabels(labels, rotation=label_rotation, ha="right")
@@ -1064,7 +1067,7 @@ def create_plot(
 
     step_axis_decimal_places = clamp_int(step_axis_decimal_places, 1, 0, 6)
     step_axis_label_stride = clamp_int(step_axis_label_stride, 2, 1, 100)
-    step_axis_label_rotation = clamp_float(step_axis_label_rotation, 30, 0, 90)
+    step_axis_label_rotation = clamp_float(step_axis_label_rotation, 0, 0, 90)
     step_axis_label_pad = clamp_float(step_axis_label_pad, 14, 0, 80)
     bottom_margin = optional_float(bottom_margin)
 
@@ -1717,10 +1720,12 @@ def plot():
     step_axis_decimal_places = request.form.get("step_axis_decimal_places", 1)
     step_axis_label_stride = request.form.get("step_axis_label_stride", 2)
     step_axis_custom_labels = request.form.get("step_axis_custom_labels", "").strip()
-    step_axis_label_rotation = request.form.get("step_axis_label_rotation", 30)
+    step_axis_label_rotation = request.form.get("step_axis_label_rotation", 0)
     step_axis_label_pad = request.form.get("step_axis_label_pad", 14)
     bottom_margin = request.form.get("bottom_margin", "")
 
+    if use_step_axis and step_axis_custom_labels:
+        step_axis_mode = "uniform_custom"
     if step_axis_group_col in [None, "", "none"]:
         step_axis_group_col = request.form.get("step_axis_sequence_col", "")
 
