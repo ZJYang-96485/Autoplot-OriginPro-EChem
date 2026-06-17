@@ -33,6 +33,7 @@ PLOT_DIR = BASE_DIR / "static" / "generated_plots"
 
 ALLOWED_EXTENSIONS = {"csv", "dat", "dta", "txt"}
 SECONDARY_MODES = {"none", "same_y_different_x", "same_x_different_y"}
+STEP_AXIS_MODES = {"auto_data", "uniform_custom"}
 
 
 def create_dirs():
@@ -138,19 +139,6 @@ def parse_csv_text(value):
         return []
 
     return [item.strip() for item in str(value).split(",") if item.strip()]
-
-
-def parse_csv_ints(value):
-    items = parse_csv_text(value)
-    numbers = []
-
-    for item in items:
-        try:
-            numbers.append(int(item))
-        except ValueError:
-            continue
-
-    return numbers
 
 
 def apply_axis_limits(axis, axis_name, minimum=None, maximum=None):
@@ -393,7 +381,6 @@ def order_data(data, x_col, line_order):
 
 def apply_plot_style(
     ax,
-    style_preset,
     axis_label_size,
     tick_label_size,
     axis_label_weight,
@@ -782,108 +769,111 @@ def plot_secondary_line_or_scatter(
         )
 
 
+def build_auto_step_records(axis_df, x_col, step_value_col, step_group_col, decimal_places):
+    if step_value_col in [None, "", "none"]:
+        return []
+
+    if step_group_col in [None, "", "none"]:
+        return []
+
+    if step_value_col not in axis_df.columns or step_group_col not in axis_df.columns or x_col not in axis_df.columns:
+        return []
+
+    data = axis_df[[x_col, step_value_col, step_group_col]].dropna()
+
+    if data.empty:
+        return []
+
+    records = []
+
+    for group_value, group in data.groupby(step_group_col, sort=True):
+        x_value = pd.to_numeric(group[x_col], errors="coerce").mean()
+        step_value = pd.to_numeric(group[step_value_col], errors="coerce").mean()
+
+        if pd.notna(x_value) and pd.notna(step_value):
+            records.append({
+                "x": float(x_value),
+                "label": format_step_value(step_value, decimal_places),
+                "group": group_value
+            })
+
+    return records
+
+
 def setup_step_axis(
     ax,
     axis_df,
     x_col,
     x_label,
     step_value_col,
-    sequence_col,
+    step_group_col,
     step_axis_label,
+    step_axis_mode,
     max_ticks,
     decimal_places,
     label_stride,
     custom_labels,
-    custom_indices,
     label_rotation,
-    label_pad
+    label_pad,
+    x_min,
+    x_max
 ):
-    if step_value_col in [None, "", "none"]:
-        return None
-
-    if sequence_col in [None, "", "none"]:
-        return None
-
-    if step_value_col not in axis_df.columns or sequence_col not in axis_df.columns or x_col not in axis_df.columns:
-        return None
-
-    data = axis_df[[x_col, step_value_col, sequence_col]].dropna()
-
-    if data.empty:
-        return None
-
-    records = []
-
-    for sequence_value, group in data.groupby(sequence_col, sort=True):
-        x_value = pd.to_numeric(group[x_col], errors="coerce").mean()
-        step_value = pd.to_numeric(group[step_value_col], errors="coerce").mean()
-
-        if pd.notna(x_value) and pd.notna(step_value):
-            records.append({
-                "sequence": sequence_value,
-                "x": x_value,
-                "label": format_step_value(step_value, decimal_places)
-            })
-
-    if not records:
-        return None
-
-    custom_labels = parse_csv_text(custom_labels)
-    custom_indices = parse_csv_ints(custom_indices)
-
-    if custom_indices:
-        selected_records = []
-
-        for record in records:
-            try:
-                sequence_as_int = int(record["sequence"])
-            except (TypeError, ValueError):
-                continue
-
-            if sequence_as_int in custom_indices:
-                selected_records.append(record)
-
-        ticks = [record["x"] for record in selected_records]
-
-        if custom_labels:
-            labels = custom_labels[:len(ticks)]
-
-            if len(labels) < len(ticks):
-                labels += [record["label"] for record in selected_records[len(labels):]]
-        else:
-            labels = [record["label"] for record in selected_records]
-
-    elif custom_labels:
-        n_labels = min(len(custom_labels), len(records))
-
-        if n_labels == 1:
-            selected_positions = [0]
-        else:
-            selected_positions = [
-                round(i * (len(records) - 1) / (n_labels - 1))
-                for i in range(n_labels)
-            ]
-
-        selected_records = [records[index] for index in selected_positions]
-        ticks = [record["x"] for record in selected_records]
-        labels = custom_labels[:n_labels]
-
-    else:
-        max_ticks = max(2, max_ticks)
-        label_stride = max(1, label_stride)
-
-        if len(records[::label_stride]) > max_ticks:
-            label_stride = max(label_stride, int((len(records) + max_ticks - 1) / max_ticks))
-
-        selected_records = records[::label_stride]
-        ticks = [record["x"] for record in selected_records]
-        labels = [record["label"] for record in selected_records]
-
-    if not ticks:
-        return None
-
     top_axis = ax.secondary_xaxis("top")
     top_axis.set_xlabel(x_label if x_label else x_col)
+
+    labels_from_user = parse_csv_text(custom_labels)
+
+    if step_axis_mode == "uniform_custom" and labels_from_user:
+        data_x = pd.to_numeric(axis_df[x_col], errors="coerce").dropna()
+
+        if x_min is not None:
+            x_start = x_min
+        elif not data_x.empty:
+            x_start = float(data_x.min())
+        else:
+            x_start = ax.get_xlim()[0]
+
+        if x_max is not None:
+            x_end = x_max
+        elif not data_x.empty:
+            x_end = float(data_x.max())
+        else:
+            x_end = ax.get_xlim()[1]
+
+        if len(labels_from_user) == 1:
+            ticks = [(x_start + x_end) / 2]
+        else:
+            ticks = [
+                x_start + index * (x_end - x_start) / (len(labels_from_user) - 1)
+                for index in range(len(labels_from_user))
+            ]
+
+        ax.set_xticks(ticks)
+        ax.set_xticklabels(labels_from_user, rotation=label_rotation, ha="right")
+        ax.set_xlabel(step_axis_label if step_axis_label else step_value_col, labelpad=label_pad)
+
+        return top_axis
+
+    records = build_auto_step_records(
+        axis_df=axis_df,
+        x_col=x_col,
+        step_value_col=step_value_col,
+        step_group_col=step_group_col,
+        decimal_places=decimal_places
+    )
+
+    if not records:
+        return top_axis
+
+    max_ticks = max(2, max_ticks)
+    label_stride = max(1, label_stride)
+
+    if len(records[::label_stride]) > max_ticks:
+        label_stride = max(label_stride, int((len(records) + max_ticks - 1) / max_ticks))
+
+    selected_records = records[::label_stride]
+    ticks = [record["x"] for record in selected_records]
+    labels = [record["label"] for record in selected_records]
 
     ax.set_xticks(ticks)
     ax.set_xticklabels(labels, rotation=label_rotation, ha="right")
@@ -915,8 +905,9 @@ def create_plot(
     fit_guide,
     smooth_window,
     use_step_axis,
+    step_axis_mode,
     step_axis_value_col,
-    step_axis_sequence_col,
+    step_axis_group_col,
     step_axis_label,
     step_axis_max_ticks,
     secondary_mode,
@@ -934,7 +925,6 @@ def create_plot(
     marker_size,
     line_width,
     opacity,
-    style_preset,
     axis_label_size,
     tick_label_size,
     axis_label_weight,
@@ -964,7 +954,6 @@ def create_plot(
     step_axis_decimal_places,
     step_axis_label_stride,
     step_axis_custom_labels,
-    step_axis_custom_indices,
     step_axis_label_rotation,
     step_axis_label_pad,
     bottom_margin
@@ -982,6 +971,9 @@ def create_plot(
 
     if secondary_mode not in SECONDARY_MODES:
         raise ValueError("Invalid secondary mode.")
+
+    if step_axis_mode not in STEP_AXIS_MODES:
+        step_axis_mode = "auto_data"
 
     if x_col not in df.columns:
         raise ValueError("Primary X column not found.")
@@ -1208,32 +1200,11 @@ def create_plot(
 
         secondary_axis.set_ylabel(right_y_label if right_y_label else y2_col)
 
-    step_top_axis = None
-
-    if use_step_axis:
-        step_top_axis = setup_step_axis(
-            ax=ax,
-            axis_df=axis_df,
-            x_col=x_col,
-            x_label=final_x_label,
-            step_value_col=step_axis_value_col,
-            sequence_col=step_axis_sequence_col,
-            step_axis_label=step_axis_label,
-            max_ticks=step_axis_max_ticks,
-            decimal_places=step_axis_decimal_places,
-            label_stride=step_axis_label_stride,
-            custom_labels=step_axis_custom_labels,
-            custom_indices=step_axis_custom_indices,
-            label_rotation=step_axis_label_rotation,
-            label_pad=step_axis_label_pad
-        )
-
     if plot_title:
         ax.set_title(plot_title)
 
     apply_plot_style(
         ax=ax,
-        style_preset=style_preset,
         axis_label_size=axis_label_size,
         tick_label_size=tick_label_size,
         axis_label_weight=axis_label_weight,
@@ -1250,8 +1221,29 @@ def create_plot(
         title_size=title_size
     )
 
+    step_top_axis = None
+
     if use_step_axis:
-        ax.tick_params(axis="x", rotation=step_axis_label_rotation)
+        step_top_axis = setup_step_axis(
+            ax=ax,
+            axis_df=axis_df,
+            x_col=x_col,
+            x_label=final_x_label,
+            step_value_col=step_axis_value_col,
+            step_group_col=step_axis_group_col,
+            step_axis_label=step_axis_label,
+            step_axis_mode=step_axis_mode,
+            max_ticks=step_axis_max_ticks,
+            decimal_places=step_axis_decimal_places,
+            label_stride=step_axis_label_stride,
+            custom_labels=step_axis_custom_labels,
+            label_rotation=step_axis_label_rotation,
+            label_pad=step_axis_label_pad,
+            x_min=x_min,
+            x_max=x_max
+        )
+
+        ax.tick_params(axis="x", top=False, labeltop=False, rotation=step_axis_label_rotation)
     else:
         ax.tick_params(axis="x", rotation=30)
 
@@ -1717,17 +1709,20 @@ def plot():
     smooth_window = request.form.get("smooth_window", 5)
 
     use_step_axis = request.form.get("use_step_axis") == "on"
+    step_axis_mode = request.form.get("step_axis_mode", "auto_data")
     step_axis_value_col = request.form.get("step_axis_value_col")
-    step_axis_sequence_col = request.form.get("step_axis_sequence_col", "sequence_index")
+    step_axis_group_col = request.form.get("step_axis_group_col")
     step_axis_label = request.form.get("step_axis_label", "").strip()
     step_axis_max_ticks = request.form.get("step_axis_max_ticks", 12)
     step_axis_decimal_places = request.form.get("step_axis_decimal_places", 1)
     step_axis_label_stride = request.form.get("step_axis_label_stride", 2)
     step_axis_custom_labels = request.form.get("step_axis_custom_labels", "").strip()
-    step_axis_custom_indices = request.form.get("step_axis_custom_indices", "").strip()
     step_axis_label_rotation = request.form.get("step_axis_label_rotation", 30)
     step_axis_label_pad = request.form.get("step_axis_label_pad", 14)
     bottom_margin = request.form.get("bottom_margin", "")
+
+    if step_axis_group_col in [None, "", "none"]:
+        step_axis_group_col = request.form.get("step_axis_sequence_col", "")
 
     line_order = request.form.get("line_order", "original")
     show_markers = request.form.get("show_markers") == "on"
@@ -1736,7 +1731,6 @@ def plot():
     line_width = request.form.get("line_width", 2.2)
     opacity = request.form.get("opacity", 1.0)
 
-    style_preset = request.form.get("style_preset", "nature")
     axis_label_size = request.form.get("axis_label_size", 18)
     tick_label_size = request.form.get("tick_label_size", 13)
     axis_label_weight = request.form.get("axis_label_weight", "bold")
@@ -1810,14 +1804,15 @@ def plot():
         "fit_guide": fit_guide,
         "smooth_window": smooth_window,
         "use_step_axis": use_step_axis,
+        "step_axis_mode": step_axis_mode,
         "step_axis_value_col": step_axis_value_col,
-        "step_axis_sequence_col": step_axis_sequence_col,
+        "step_axis_group_col": step_axis_group_col,
+        "step_axis_sequence_col": step_axis_group_col,
         "step_axis_label": step_axis_label,
         "step_axis_max_ticks": step_axis_max_ticks,
         "step_axis_decimal_places": step_axis_decimal_places,
         "step_axis_label_stride": step_axis_label_stride,
         "step_axis_custom_labels": step_axis_custom_labels,
-        "step_axis_custom_indices": step_axis_custom_indices,
         "step_axis_label_rotation": step_axis_label_rotation,
         "step_axis_label_pad": step_axis_label_pad,
         "bottom_margin": bottom_margin,
@@ -1827,7 +1822,6 @@ def plot():
         "marker_size": marker_size,
         "line_width": line_width,
         "opacity": opacity,
-        "style_preset": style_preset,
         "axis_label_size": axis_label_size,
         "tick_label_size": tick_label_size,
         "axis_label_weight": axis_label_weight,
@@ -1889,8 +1883,9 @@ def plot():
             fit_guide=fit_guide,
             smooth_window=smooth_window,
             use_step_axis=use_step_axis,
+            step_axis_mode=step_axis_mode,
             step_axis_value_col=step_axis_value_col,
-            step_axis_sequence_col=step_axis_sequence_col,
+            step_axis_group_col=step_axis_group_col,
             step_axis_label=step_axis_label,
             step_axis_max_ticks=step_axis_max_ticks,
             secondary_mode=secondary_mode,
@@ -1908,7 +1903,6 @@ def plot():
             marker_size=marker_size,
             line_width=line_width,
             opacity=opacity,
-            style_preset=style_preset,
             axis_label_size=axis_label_size,
             tick_label_size=tick_label_size,
             axis_label_weight=axis_label_weight,
@@ -1938,7 +1932,6 @@ def plot():
             step_axis_decimal_places=step_axis_decimal_places,
             step_axis_label_stride=step_axis_label_stride,
             step_axis_custom_labels=step_axis_custom_labels,
-            step_axis_custom_indices=step_axis_custom_indices,
             step_axis_label_rotation=step_axis_label_rotation,
             step_axis_label_pad=step_axis_label_pad,
             bottom_margin=bottom_margin

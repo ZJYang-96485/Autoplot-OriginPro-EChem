@@ -298,12 +298,13 @@
                 <div class="form-grid">
                     <div>
                         <label for="sequence_name">Sequential dataset name</label>
-                        <input type="text" id="sequence_name" name="sequence_name" placeholder="Example: PBS + NO3 1600 rpm sequence">
+                        <input type="text" id="sequence_name" name="sequence_name" placeholder="Example: sequence experiment">
+
                     </div>
 
                     <div>
                         <label for="sequence_condition">Condition label</label>
-                        <input type="text" id="sequence_condition" name="sequence_condition" placeholder="Example: PBS + NO3">
+                        <input type="text" id="sequence_condition" name="sequence_condition" placeholder="Example: condition A">
                     </div>
 
                     <div class="form-grid-full">
@@ -335,7 +336,7 @@
                 <button type="submit">Upload and Stitch Sequential Files</button>
             </form>
 
-            <p class="hint">Use this for ordered files such as #1, #2, #3 ... #32. It creates global_time_s, global_time_min, sequence_index, step_variable_value, and step_label.</p>
+            <p class="hint">This creates global_time_s, global_time_min, sequence_index, step_variable_value, and step_label.</p>
         </section>
 
         <section class="card full-width">
@@ -357,7 +358,7 @@
 
                     <div class="form-grid-full">
                         <label for="converted_name">Converted dataset name</label>
-                        <input type="text" id="converted_name" name="converted_name" placeholder="Example: PBS_NO3_1600rpm_RHE_j">
+                        <input type="text" id="converted_name" name="converted_name" placeholder="Example: converted_dataset">
                     </div>
 
                     <div class="form-grid-full">
@@ -374,7 +375,6 @@
                     <div>
                         <label for="potential_col">Potential column</label>
                         <input type="text" id="potential_col" name="potential_col" value="step_variable_value">
-                        <p class="hint">For stitched sequential files, use step_variable_value. For raw files, use Vf_V_vs_Ref.</p>
                     </div>
 
                     <div>
@@ -385,13 +385,11 @@
                     <div>
                         <label for="reference_offset_v">Reference offset / V</label>
                         <input type="number" id="reference_offset_v" name="reference_offset_v" value="0" step="0.001">
-                        <p class="hint">Use your reference electrode potential versus SHE.</p>
                     </div>
 
                     <div>
                         <label for="ph_value">pH</label>
                         <input type="number" id="ph_value" name="ph_value" value="0" step="0.01">
-                        <p class="hint">Formula: E_RHE = E_ref + reference_offset + 0.05916 × pH.</p>
                     </div>
 
                     <div class="form-grid-full">
@@ -418,14 +416,11 @@
                     <div>
                         <label for="electrode_area_cm2">Electrode area / cm²</label>
                         <input type="number" id="electrode_area_cm2" name="electrode_area_cm2" value="1" step="0.0001">
-                        <p class="hint">Formula: j_mA_cm2 = Im_A × 1000 / electrode_area_cm2.</p>
                     </div>
                 </div>
 
                 <button type="submit">Create Converted Dataset</button>
             </form>
-
-            <p class="hint">For stitched sequence plots, convert step_variable_value to E_RHE and Im_A to j_mA_cm2.</p>
         </section>
 
         <section class="card full-width">
@@ -433,7 +428,7 @@
 
             <form action="{{ url_for('combine_existing_datasets') }}" method="post">
                 <label for="combined_existing_name">New combined dataset name</label>
-                <input type="text" id="combined_existing_name" name="combined_existing_name" placeholder="Example: PBS vs PBS + NaNO3 comparison">
+                <input type="text" id="combined_existing_name" name="combined_existing_name" placeholder="Example: comparison_dataset">
 
                 <div class="combine-list">
                     {% for dataset in datasets %}
@@ -443,7 +438,7 @@
                                 {{ dataset.file_name }}<br>
                                 <span class="hint">{{ dataset.dataset_type }}</span>
                             </div>
-                            <input type="text" name="condition_{{ dataset.dataset_id }}" placeholder="Condition, e.g., PBS">
+                            <input type="text" name="condition_{{ dataset.dataset_id }}" placeholder="Condition">
                             <input type="text" name="dataset_label_{{ dataset.dataset_id }}" placeholder="Dataset label">
                         </div>
                     {% endfor %}
@@ -451,8 +446,6 @@
 
                 <button type="submit">Combine Selected Datasets</button>
             </form>
-
-            <p class="hint">Use this to combine already-uploaded datasets into one long-format comparison file.</p>
         </section>
 
         <section class="card">
@@ -474,22 +467,16 @@
         </section>
 
         <section class="card">
-            <h2>Recommended Final Plot</h2>
+            <h2>Step Axis Concept</h2>
             <div class="dataset-info">
-                For the stitched electrochemistry sequence:
+                Two modes are available:
                 <ul class="small-list">
-                    <li>X: global_time_min</li>
-                    <li>Y: j_mA_cm2</li>
-                    <li>Step axis: E_RHE vs sequence_index</li>
-                    <li>X label: <code>t / min</code></li>
-                    <li>Y label: <code>j / mA cm⁻²</code></li>
-                    <li>Step-axis label: <code>E / V vs. RHE</code></li>
-                    <li>Custom bottom labels: <code>0.5, 0.2, -0.1, -0.5, -0.9, -0.7, -0.3, 0, 0.4</code></li>
-                    <li>Figure size: 8.2 × 5.3</li>
-                    <li>X scale: 0 to 160, major interval 10</li>
-                    <li>Y scale: -100 to 5, major interval 20</li>
-                    <li>Bottom margin: 0.24</li>
+                    <li><strong>Auto from data:</strong> read labels from a selected step-value column and step-group column.</li>
+                    <li><strong>Uniform custom labels:</strong> manually typed labels are evenly distributed across the X-axis range.</li>
                 </ul>
+                Example custom labels:
+                <br>
+                <code>0.5, 0.2, -0.1, -0.5, -0.9, -0.7, -0.3, 0, 0.4</code>
             </div>
         </section>
 
@@ -524,28 +511,11 @@
                     <div>
                         <label for="x_label">X-axis name</label>
                         <input type="text" id="x_label" name="x_label" value="{{ form_state.x_label or '' }}" placeholder="t / min">
-                        <p class="hint">Use plain Unicode labels for consistent bold formatting.</p>
                     </div>
 
                     <div>
                         <label for="y_label">Y-axis name</label>
                         <input type="text" id="y_label" name="y_label" value="{{ form_state.y_label or '' }}" placeholder="j / mA cm⁻²">
-                        <p class="hint">Unicode labels such as cm⁻² stay uniformly bold when axis weight is bold.</p>
-                    </div>
-
-                    <div class="form-grid-full">
-                        <h3 class="section-title">Label Examples</h3>
-                        <div class="dataset-info">
-                            For consistent bold labels, use Unicode/plain text. LaTeX math text is also supported, but parts inside $...$ may not follow the same bold style.
-                            <ul class="small-list">
-                                <li><strong>Recommended:</strong> <code>t / min</code></li>
-                                <li><strong>Recommended:</strong> <code>E / V vs. RHE</code></li>
-                                <li><strong>Recommended:</strong> <code>j / mA cm⁻²</code></li>
-                                <li><strong>Recommended:</strong> <code>PBS + NaNO₃</code></li>
-                                <li><strong>Recommended:</strong> <code>H₂O₂</code></li>
-                                <li><strong>Optional math style:</strong> <code>$j$ / mA cm$^{-2}$</code></li>
-                            </ul>
-                        </div>
                     </div>
 
                     <div>
@@ -555,7 +525,7 @@
 
                     <div>
                         <label for="plot_title">Topic head</label>
-                        <input type="text" id="plot_title" name="plot_title" value="{{ form_state.plot_title or '' }}" placeholder="Chronoamperometry sequence in PBS + NaNO₃">
+                        <input type="text" id="plot_title" name="plot_title" value="{{ form_state.plot_title or '' }}" placeholder="Optional title">
                     </div>
 
                     <div>
@@ -570,7 +540,7 @@
 
                     <div class="form-grid-full">
                         <label for="primary_label">Primary curve label</label>
-                        <input type="text" id="primary_label" name="primary_label" value="{{ form_state.primary_label or '' }}" placeholder="PBS + NaNO₃">
+                        <input type="text" id="primary_label" name="primary_label" value="{{ form_state.primary_label or '' }}" placeholder="Optional legend label">
                     </div>
 
                     <div class="form-grid-full">
@@ -584,7 +554,7 @@
 
                     <div>
                         <label for="group_label">Legend title</label>
-                        <input type="text" id="group_label" name="group_label" value="{{ form_state.group_label or '' }}" placeholder="Optional, e.g., Condition">
+                        <input type="text" id="group_label" name="group_label" value="{{ form_state.group_label or '' }}" placeholder="Optional">
                     </div>
 
                     <div>
@@ -663,9 +633,17 @@
                     <div class="form-grid-full">
                         <label class="checkbox-label">
                             <input type="checkbox" id="use_step_axis" name="use_step_axis" {% if form_state.use_step_axis %}checked{% endif %}>
-                            Use step variable labels on bottom axis
+                            Use step labels on the bottom axis
                         </label>
-                        <p class="hint">Use this when real X is global_time_min, but bottom labels should show potential values.</p>
+                    </div>
+
+                    <div>
+                        <label for="step_axis_mode">Step-axis label mode</label>
+                        <select id="step_axis_mode" name="step_axis_mode">
+                            <option value="auto_data" {% if form_state.step_axis_mode == "auto_data" or not form_state.step_axis_mode %}selected{% endif %}>Auto from data</option>
+                            <option value="uniform_custom" {% if form_state.step_axis_mode == "uniform_custom" %}selected{% endif %}>Uniform custom labels</option>
+                        </select>
+                        <p class="hint">Uniform custom labels are evenly distributed across the X-axis range.</p>
                     </div>
 
                     <div>
@@ -674,48 +652,39 @@
                     </div>
 
                     <div>
-                        <label for="step_axis_sequence_col">Step sequence column</label>
-                        <select id="step_axis_sequence_col" name="step_axis_sequence_col"></select>
+                        <label for="step_axis_group_col">Step group column</label>
+                        <select id="step_axis_group_col" name="step_axis_group_col"></select>
                     </div>
 
                     <div>
-                        <label for="step_axis_label">Bottom step-axis label</label>
+                        <label for="step_axis_label">Bottom step-axis name</label>
                         <input type="text" id="step_axis_label" name="step_axis_label" value="{{ form_state.step_axis_label or '' }}" placeholder="E / V vs. RHE">
-                        <p class="hint">Use plain text for consistent bold formatting.</p>
                     </div>
 
                     <div>
-                        <label for="step_axis_max_ticks">Maximum step-axis ticks</label>
+                        <label for="step_axis_max_ticks">Maximum auto labels</label>
                         <input type="number" id="step_axis_max_ticks" name="step_axis_max_ticks" min="2" max="64" step="1" value="{{ form_state.step_axis_max_ticks or '12' }}">
                     </div>
 
                     <div>
-                        <label for="step_axis_decimal_places">Step-axis decimal places</label>
+                        <label for="step_axis_decimal_places">Auto label decimal places</label>
                         <input type="number" id="step_axis_decimal_places" name="step_axis_decimal_places" min="0" max="6" step="1" value="{{ form_state.step_axis_decimal_places or '1' }}">
-                        <p class="hint">Use 1 to avoid long labels like 0.000137.</p>
                     </div>
 
                     <div>
-                        <label for="step_axis_label_stride">Step-axis label stride</label>
+                        <label for="step_axis_label_stride">Auto label stride</label>
                         <input type="number" id="step_axis_label_stride" name="step_axis_label_stride" min="1" max="100" step="1" value="{{ form_state.step_axis_label_stride or '2' }}">
-                        <p class="hint">Larger stride shows fewer bottom labels.</p>
                     </div>
 
                     <div class="form-grid-full">
-                        <label for="step_axis_custom_labels">Custom bottom step-axis labels</label>
+                        <label for="step_axis_custom_labels">Uniform custom bottom labels</label>
                         <input type="text" id="step_axis_custom_labels" name="step_axis_custom_labels" value="{{ form_state.step_axis_custom_labels or '' }}" placeholder="0.5, 0.2, -0.1, -0.5, -0.9, -0.7, -0.3, 0, 0.4">
-                        <p class="hint">Optional. If filled, these labels override the automatically generated bottom labels.</p>
-                    </div>
-
-                    <div class="form-grid-full">
-                        <label for="step_axis_custom_indices">Custom sequence indices for bottom labels</label>
-                        <input type="text" id="step_axis_custom_indices" name="step_axis_custom_indices" value="{{ form_state.step_axis_custom_indices or '' }}" placeholder="1, 5, 9, 13, 17, 21, 25, 29, 32">
-                        <p class="hint">Optional. Use this if you want labels at exact sequence numbers. Leave empty to spread custom labels across the full time range.</p>
                     </div>
 
                     <div>
                         <label for="step_axis_label_rotation">Bottom label rotation</label>
-                        <input type="number" id="step_axis_label_rotation" name="step_axis_label_rotation" min="0" max="90" step="1" value="{{ form_state.step_axis_label_rotation or '30' }}">
+                        <input type="number" id="step_axis_label_rotation" name="step_axis_label_rotation" min="0" max="90" step="1" value="{{ form_state.step_axis_label_rotation or '0' }}">
+                        <p class="hint">Use 0 for horizontal labels.</p>
                     </div>
 
                     <div>
@@ -725,8 +694,7 @@
 
                     <div>
                         <label for="bottom_margin">Bottom margin</label>
-                        <input type="number" id="bottom_margin" name="bottom_margin" min="0.05" max="0.5" step="0.01" value="{{ form_state.bottom_margin or '' }}" placeholder="0.24">
-                        <p class="hint">Use 0.20–0.30 if bottom labels are crowded or clipped.</p>
+                        <input type="number" id="bottom_margin" name="bottom_margin" min="0.05" max="0.5" step="0.01" value="{{ form_state.bottom_margin or '' }}" placeholder="0.20">
                     </div>
 
                     <div class="form-grid-full">
@@ -746,12 +714,6 @@
                     <div>
                         <label for="figure_dpi">Figure DPI</label>
                         <input type="number" id="figure_dpi" name="figure_dpi" min="72" max="600" step="1" value="{{ form_state.figure_dpi or '150' }}">
-                    </div>
-
-                    <div class="form-grid-full">
-                        <div class="dataset-info">
-                            For stitched sequence plots, the real X-axis is time. When Step Variable Axis is enabled, the top axis shows time intervals and the bottom labels show potential values.
-                        </div>
                     </div>
 
                     <div>
@@ -837,14 +799,6 @@
 
                     <div class="form-grid-full">
                         <h3 class="section-title">Publication Style and Frame</h3>
-                    </div>
-
-                    <div>
-                        <label for="style_preset">Style preset</label>
-                        <select id="style_preset" name="style_preset">
-                            <option value="nature" {% if form_state.style_preset == "nature" or not form_state.style_preset %}selected{% endif %}>Nature-like</option>
-                            <option value="custom" {% if form_state.style_preset == "custom" %}selected{% endif %}>Custom</option>
-                        </select>
                     </div>
 
                     <div>
@@ -952,7 +906,6 @@
                             <option value="same_y_different_x" {% if form_state.secondary_mode == "same_y_different_x" %}selected{% endif %}>Y(X1) and Y(X2): same Y, different X</option>
                             <option value="same_x_different_y" {% if form_state.secondary_mode == "same_x_different_y" %}selected{% endif %}>Y1(X) and Y2(X): same X, different Y</option>
                         </select>
-                        <p class="hint">Do not use this together with group plotting, summary mode, or step variable axis.</p>
                     </div>
 
                     <div id="secondary_options" class="form-grid-full option-box hidden">
@@ -969,12 +922,12 @@
 
                             <div id="top_x_label_block">
                                 <label for="top_x_label">Top X-axis name</label>
-                                <input type="text" id="top_x_label" name="top_x_label" value="{{ form_state.top_x_label or '' }}" placeholder="t / min">
+                                <input type="text" id="top_x_label" name="top_x_label" value="{{ form_state.top_x_label or '' }}" placeholder="Top X label">
                             </div>
 
                             <div id="right_y_label_block">
                                 <label for="right_y_label">Right Y-axis name</label>
-                                <input type="text" id="right_y_label" name="right_y_label" value="{{ form_state.right_y_label or '' }}" placeholder="j / mA cm⁻²">
+                                <input type="text" id="right_y_label" name="right_y_label" value="{{ form_state.right_y_label or '' }}" placeholder="Right Y label">
                             </div>
 
                             <div>
@@ -1046,7 +999,7 @@
 
     const stepAxisCheck = document.getElementById("use_step_axis");
     const stepAxisValueSelect = document.getElementById("step_axis_value_col");
-    const stepAxisSequenceSelect = document.getElementById("step_axis_sequence_col");
+    const stepAxisGroupSelect = document.getElementById("step_axis_group_col");
 
     const plotTypeSelect = document.getElementById("plot_type");
     const xLabelInput = document.getElementById("x_label");
@@ -1134,7 +1087,7 @@
             clearSelect(groupSelect);
             clearSelect(summaryGroupSelect);
             clearSelect(stepAxisValueSelect);
-            clearSelect(stepAxisSequenceSelect);
+            clearSelect(stepAxisGroupSelect);
             clearSelect(plotTypeSelect);
             return;
         }
@@ -1149,7 +1102,7 @@
                 clearSelect(groupSelect);
                 clearSelect(summaryGroupSelect);
                 clearSelect(stepAxisValueSelect);
-                clearSelect(stepAxisSequenceSelect);
+                clearSelect(stepAxisGroupSelect);
 
                 addOption(ySelect, "none", "None / count or histogram", formState.y_col);
                 addOption(x2Select, "none", "None", formState.x2_col);
@@ -1157,7 +1110,7 @@
                 addOption(groupSelect, "none", "None", formState.group_col);
                 addOption(summaryGroupSelect, "none", "None", formState.summary_group_col);
                 addOption(stepAxisValueSelect, "none", "None", formState.step_axis_value_col);
-                addOption(stepAxisSequenceSelect, "none", "None", formState.step_axis_sequence_col);
+                addOption(stepAxisGroupSelect, "none", "None", formState.step_axis_group_col);
 
                 data.column_names.forEach(column => {
                     const type = data.column_types[column];
@@ -1169,7 +1122,7 @@
                     addOption(groupSelect, column, labelColumn(column, type), formState.group_col);
                     addOption(summaryGroupSelect, column, labelColumn(column, type), formState.summary_group_col);
                     addOption(stepAxisValueSelect, column, labelColumn(column, type), formState.step_axis_value_col);
-                    addOption(stepAxisSequenceSelect, column, labelColumn(column, type), formState.step_axis_sequence_col);
+                    addOption(stepAxisGroupSelect, column, labelColumn(column, type), formState.step_axis_group_col);
                 });
 
                 if (!formState.x_col && data.column_names.includes("global_time_min")) {
@@ -1194,12 +1147,18 @@
                     stepAxisValueSelect.value = "E_RHE";
                 } else if (!formState.step_axis_value_col && data.column_names.includes("step_variable_value")) {
                     stepAxisValueSelect.value = "step_variable_value";
-                } else if (!formState.step_axis_value_col && data.column_names.includes("Vf_V_vs_Ref")) {
-                    stepAxisValueSelect.value = "Vf_V_vs_Ref";
+                } else if (!formState.step_axis_value_col && data.numeric_columns.length > 0) {
+                    stepAxisValueSelect.value = data.numeric_columns[0];
                 }
 
-                if (!formState.step_axis_sequence_col && data.column_names.includes("sequence_index")) {
-                    stepAxisSequenceSelect.value = "sequence_index";
+                if (!formState.step_axis_group_col && data.column_names.includes("sequence_index")) {
+                    stepAxisGroupSelect.value = "sequence_index";
+                } else if (!formState.step_axis_group_col && data.column_names.includes("source_index")) {
+                    stepAxisGroupSelect.value = "source_index";
+                } else if (!formState.step_axis_group_col && data.column_names.includes("source_file")) {
+                    stepAxisGroupSelect.value = "source_file";
+                } else if (!formState.step_axis_group_col && data.categorical_columns.length > 0) {
+                    stepAxisGroupSelect.value = data.categorical_columns[0];
                 }
 
                 if (!formState.x2_col && data.numeric_columns.length > 2) {
@@ -1288,11 +1247,10 @@
                 <strong>Y type:</strong> ${data.y_type}<br>
                 <strong>Suggested plot types:</strong> ${data.plot_types.join(", ")}<br>
                 <ul class="small-list">
-                    <li>For stitched sequential data, use X = global_time_min.</li>
-                    <li>After conversion, use Y = j_mA_cm2 and step value = E_RHE.</li>
-                    <li>To show potential labels on the bottom axis, enable Step Variable Axis.</li>
-                    <li>Use custom bottom labels when remaking a published figure.</li>
-                    <li>For paper-style plots, use full frame and inward ticks on all four sides.</li>
+                    <li>Use Step Variable Axis to show another variable as bottom labels.</li>
+                    <li>Auto from data uses a step-value column and a step-group column.</li>
+                    <li>Uniform custom labels places typed labels evenly across the X range.</li>
+                    <li>Bottom label rotation = 0 gives horizontal bottom labels.</li>
                     <li>Do not use secondary curve mode together with group, summary, or step-axis mode.</li>
                 </ul>
             `;
@@ -1307,7 +1265,7 @@
         formState.group_col = null;
         formState.summary_group_col = null;
         formState.step_axis_value_col = null;
-        formState.step_axis_sequence_col = null;
+        formState.step_axis_group_col = null;
         formState.plot_type = null;
 
         xLabelInput.value = "";
