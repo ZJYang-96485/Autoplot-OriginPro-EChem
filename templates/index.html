@@ -102,6 +102,12 @@
             opacity: 0.9;
         }
 
+        code {
+            background: #e8edf5;
+            padding: 2px 5px;
+            border-radius: 4px;
+        }
+
         .messages {
             margin-bottom: 18px;
         }
@@ -475,8 +481,9 @@
                     <li>X: global_time_min</li>
                     <li>Y: j_mA_cm2</li>
                     <li>Step axis: E_RHE vs sequence_index</li>
-                    <li>Line width: 3</li>
-                    <li>Axis label size: 32 if you want a strong figure style</li>
+                    <li>X label: <code>$t$ / min</code></li>
+                    <li>Y label: <code>$j$ / mA cm$^{-2}$</code></li>
+                    <li>Step-axis label: <code>$E$ / V vs. RHE</code></li>
                     <li>Ticks inward on all sides</li>
                     <li>Full frame on</li>
                 </ul>
@@ -513,12 +520,29 @@
 
                     <div>
                         <label for="x_label">X-axis name</label>
-                        <input type="text" id="x_label" name="x_label" value="{{ form_state.x_label or '' }}">
+                        <input type="text" id="x_label" name="x_label" value="{{ form_state.x_label or '' }}" placeholder="$t$ / min">
+                        <p class="hint">LaTeX-style math labels are supported.</p>
                     </div>
 
                     <div>
                         <label for="y_label">Y-axis name</label>
-                        <input type="text" id="y_label" name="y_label" value="{{ form_state.y_label or '' }}">
+                        <input type="text" id="y_label" name="y_label" value="{{ form_state.y_label or '' }}" placeholder="$j$ / mA cm$^{-2}$">
+                        <p class="hint">Use math mode for superscripts and subscripts.</p>
+                    </div>
+
+                    <div class="form-grid-full">
+                        <h3 class="section-title">LaTeX Label Examples</h3>
+                        <div class="dataset-info">
+                            Matplotlib math labels are supported. Use dollar signs around math symbols.
+                            <ul class="small-list">
+                                <li><code>$t$ / min</code></li>
+                                <li><code>$E$ / V vs. RHE</code></li>
+                                <li><code>$j$ / mA cm$^{-2}$</code></li>
+                                <li><code>PBS + NaNO$_3$</code></li>
+                                <li><code>H$_2$O$_2$</code></li>
+                                <li><code>$i$ / mA</code></li>
+                            </ul>
+                        </div>
                     </div>
 
                     <div>
@@ -528,7 +552,7 @@
 
                     <div>
                         <label for="plot_title">Topic head</label>
-                        <input type="text" id="plot_title" name="plot_title" value="{{ form_state.plot_title or '' }}" placeholder="Optional plot title">
+                        <input type="text" id="plot_title" name="plot_title" value="{{ form_state.plot_title or '' }}" placeholder="PBS + NaNO$_3$ chronoamperometry">
                     </div>
 
                     <div>
@@ -543,7 +567,7 @@
 
                     <div class="form-grid-full">
                         <label for="primary_label">Primary curve label</label>
-                        <input type="text" id="primary_label" name="primary_label" value="{{ form_state.primary_label or '' }}" placeholder="Optional legend label">
+                        <input type="text" id="primary_label" name="primary_label" value="{{ form_state.primary_label or '' }}" placeholder="PBS + NaNO$_3$">
                     </div>
 
                     <div class="form-grid-full">
@@ -653,7 +677,8 @@
 
                     <div>
                         <label for="step_axis_label">Bottom step-axis label</label>
-                        <input type="text" id="step_axis_label" name="step_axis_label" value="{{ form_state.step_axis_label or '' }}" placeholder="Example: E / V vs. RHE">
+                        <input type="text" id="step_axis_label" name="step_axis_label" value="{{ form_state.step_axis_label or '' }}" placeholder="$E$ / V vs. RHE">
+                        <p class="hint">For the stitched sequence graph, use $E$ / V vs. RHE.</p>
                     </div>
 
                     <div>
@@ -836,12 +861,12 @@
 
                             <div id="top_x_label_block">
                                 <label for="top_x_label">Top X-axis name</label>
-                                <input type="text" id="top_x_label" name="top_x_label" value="{{ form_state.top_x_label or '' }}" placeholder="Example: t / min">
+                                <input type="text" id="top_x_label" name="top_x_label" value="{{ form_state.top_x_label or '' }}" placeholder="$t$ / min">
                             </div>
 
                             <div id="right_y_label_block">
                                 <label for="right_y_label">Right Y-axis name</label>
-                                <input type="text" id="right_y_label" name="right_y_label" value="{{ form_state.right_y_label or '' }}" placeholder="Example: j / mA cm^-2">
+                                <input type="text" id="right_y_label" name="right_y_label" value="{{ form_state.right_y_label or '' }}" placeholder="$j$ / mA cm$^{-2}$">
                             </div>
 
                             <div>
