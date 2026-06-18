@@ -918,8 +918,13 @@ def setup_step_axis(
     x_min,
     x_max
 ):
-    top_axis = ax.secondary_xaxis("top")
+    top_axis = ax.twiny()
+    top_axis.patch.set_alpha(0)
     top_axis.set_xlabel(x_label if x_label else x_col)
+    top_axis.xaxis.tick_top()
+    top_axis.xaxis.set_label_position("top")
+    top_axis.spines["bottom"].set_visible(False)
+    top_axis.grid(False)
 
     step_axis_mode = step_axis_mode if step_axis_mode in STEP_AXIS_MODES else "auto_data"
     step_axis_placement = step_axis_placement if step_axis_placement in STEP_AXIS_PLACEMENTS else "uniform"
@@ -1406,8 +1411,11 @@ def create_plot(
     apply_axis_limits(ax, "y", y_min, y_max)
 
     if use_step_axis and step_top_axis is not None:
+        step_top_axis.set_xlim(ax.get_xlim())
+
+    if use_step_axis and step_top_axis is not None:
         apply_axis_tick_control(
-            axis=step_top_axis,
+        axis=step_top_axis,
             axis_name="x",
             tick_mode=x_tick_mode,
             major_interval=x_major_interval,
