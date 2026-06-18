@@ -1889,6 +1889,9 @@ def plot():
     if use_step_axis and step_axis_custom_labels:
         step_axis_mode = "uniform_custom"
 
+    if use_step_axis and step_axis_custom_positions:
+        step_axis_placement = "custom_positions"
+
     if step_axis_group_col in [None, "", "none"]:
         step_axis_group_col = request.form.get("step_axis_sequence_col", "")
 

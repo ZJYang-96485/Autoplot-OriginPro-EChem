@@ -468,17 +468,11 @@
         <section class="card">
             <h2>Axis Control Concept</h2>
             <div class="dataset-info">
-                Tick control supports:
+                The main X scale controls where both top time ticks and bottom step labels are placed.
                 <ul class="small-list">
-                    <li><strong>Auto:</strong> let matplotlib choose ticks.</li>
-                    <li><strong>Uniform interval:</strong> use major and minor intervals.</li>
-                    <li><strong>Custom positions:</strong> type exact tick positions and optional labels.</li>
-                </ul>
-                Step label placement supports:
-                <ul class="small-list">
-                    <li><strong>Uniform across X range:</strong> clean published-style spacing.</li>
-                    <li><strong>At data group positions:</strong> labels appear where step groups occur.</li>
-                    <li><strong>Custom X positions:</strong> manually control label positions.</li>
+                    <li><strong>Main X Scale / Top Axis:</strong> real X coordinate, such as time.</li>
+                    <li><strong>Bottom Step Labels:</strong> labels placed at positions on the same main X scale.</li>
+                    <li><strong>Custom label positions:</strong> use main X units, such as minutes.</li>
                 </ul>
             </div>
         </section>
@@ -512,7 +506,7 @@
                     </div>
 
                     <div>
-                        <label for="x_label">X-axis name</label>
+                        <label for="x_label">Top X-axis name</label>
                         <input type="text" id="x_label" name="x_label" value="{{ form_state.x_label or '' }}" placeholder="t / min">
                     </div>
 
@@ -630,18 +624,18 @@
                     </div>
 
                     <div class="form-grid-full">
-                        <h3 class="section-title">Step Variable Axis</h3>
+                        <h3 class="section-title">Bottom Step Label Axis</h3>
                     </div>
 
                     <div class="form-grid-full">
                         <label class="checkbox-label">
                             <input type="checkbox" id="use_step_axis" name="use_step_axis" {% if form_state.use_step_axis %}checked{% endif %}>
-                            Use step labels on the bottom axis
+                            Use bottom step labels
                         </label>
                     </div>
 
                     <div>
-                        <label for="step_axis_mode">Step-axis label mode</label>
+                        <label for="step_axis_mode">Bottom label mode</label>
                         <select id="step_axis_mode" name="step_axis_mode">
                             <option value="auto_data" {% if form_state.step_axis_mode == "auto_data" or not form_state.step_axis_mode %}selected{% endif %}>Auto from data</option>
                             <option value="uniform_custom" {% if form_state.step_axis_mode == "uniform_custom" %}selected{% endif %}>Custom labels</option>
@@ -649,11 +643,11 @@
                     </div>
 
                     <div>
-                        <label for="step_axis_placement">Step label placement</label>
+                        <label for="step_axis_placement">Bottom label placement</label>
                         <select id="step_axis_placement" name="step_axis_placement">
-                            <option value="uniform" {% if form_state.step_axis_placement == "uniform" or not form_state.step_axis_placement %}selected{% endif %}>Uniform across X range</option>
+                            <option value="uniform" {% if form_state.step_axis_placement == "uniform" or not form_state.step_axis_placement %}selected{% endif %}>Uniform across main X range</option>
                             <option value="data_positions" {% if form_state.step_axis_placement == "data_positions" %}selected{% endif %}>At data group positions</option>
-                            <option value="custom_positions" {% if form_state.step_axis_placement == "custom_positions" %}selected{% endif %}>Custom X positions</option>
+                            <option value="custom_positions" {% if form_state.step_axis_placement == "custom_positions" %}selected{% endif %}>Custom positions on main X scale</option>
                         </select>
                     </div>
 
@@ -668,7 +662,7 @@
                     </div>
 
                     <div>
-                        <label for="step_axis_label">Bottom step-axis name</label>
+                        <label for="step_axis_label">Bottom axis name</label>
                         <input type="text" id="step_axis_label" name="step_axis_label" value="{{ form_state.step_axis_label or '' }}" placeholder="E / V vs. RHE">
                     </div>
 
@@ -693,9 +687,9 @@
                     </div>
 
                     <div class="form-grid-full">
-                        <label for="step_axis_custom_positions">Custom bottom label X positions</label>
-                        <input type="text" id="step_axis_custom_positions" name="step_axis_custom_positions" value="{{ form_state.step_axis_custom_positions or '' }}" placeholder="0, 20, 40, 60, 80, 100, 120, 140, 160">
-                        <p class="hint">Used only when Step label placement is Custom X positions.</p>
+                        <label for="step_axis_custom_positions">Bottom label positions on main X scale</label>
+                        <input type="text" id="step_axis_custom_positions" name="step_axis_custom_positions" value="{{ form_state.step_axis_custom_positions or '' }}" placeholder="0, 20, 45, 75, 100, 110, 125, 140, 155">
+                        <p class="hint">Use the main X coordinate here. For time plots, these are time values in minutes.</p>
                     </div>
 
                     <div>
@@ -733,7 +727,7 @@
                     </div>
 
                     <div class="form-grid-full">
-                        <h3 class="section-title">X / Top Axis Ticks</h3>
+                        <h3 class="section-title">Main X Scale / Top Axis Ticks</h3>
                     </div>
 
                     <div>
@@ -766,14 +760,13 @@
                     </div>
 
                     <div class="form-grid-full">
-                        <label for="x_custom_ticks">X custom tick positions</label>
+                        <label for="x_custom_ticks">Top X custom tick positions</label>
                         <input type="text" id="x_custom_ticks" name="x_custom_ticks" value="{{ form_state.x_custom_ticks or '' }}" placeholder="0, 10, 20, 30, 40, 50">
                     </div>
 
                     <div class="form-grid-full">
-                        <label for="x_custom_tick_labels">X custom tick labels</label>
+                        <label for="x_custom_tick_labels">Top X custom tick labels</label>
                         <input type="text" id="x_custom_tick_labels" name="x_custom_tick_labels" value="{{ form_state.x_custom_tick_labels or '' }}" placeholder="0, 10, 20, 30, 40, 50">
-                        <p class="hint">Optional. Number of labels should match number of custom tick positions.</p>
                     </div>
 
                     <div class="form-grid-full">
@@ -1061,8 +1054,24 @@
     const dataReductionSelect = document.getElementById("data_reduction");
 
     const stepAxisCheck = document.getElementById("use_step_axis");
+    const stepAxisModeSelect = document.getElementById("step_axis_mode");
+    const stepAxisPlacementSelect = document.getElementById("step_axis_placement");
     const stepAxisValueSelect = document.getElementById("step_axis_value_col");
     const stepAxisGroupSelect = document.getElementById("step_axis_group_col");
+    const stepAxisCustomLabelsInput = document.getElementById("step_axis_custom_labels");
+    const stepAxisCustomPositionsInput = document.getElementById("step_axis_custom_positions");
+
+    const xTickModeSelect = document.getElementById("x_tick_mode");
+    const xMajorIntervalInput = document.getElementById("x_major_interval");
+    const xMinorIntervalInput = document.getElementById("x_minor_interval");
+    const xCustomTicksInput = document.getElementById("x_custom_ticks");
+    const xCustomTickLabelsInput = document.getElementById("x_custom_tick_labels");
+
+    const yTickModeSelect = document.getElementById("y_tick_mode");
+    const yMajorIntervalInput = document.getElementById("y_major_interval");
+    const yMinorIntervalInput = document.getElementById("y_minor_interval");
+    const yCustomTicksInput = document.getElementById("y_custom_ticks");
+    const yCustomTickLabelsInput = document.getElementById("y_custom_tick_labels");
 
     const plotTypeSelect = document.getElementById("plot_type");
     const xLabelInput = document.getElementById("x_label");
@@ -1310,10 +1319,10 @@
                 <strong>Y type:</strong> ${data.y_type}<br>
                 <strong>Suggested plot types:</strong> ${data.plot_types.join(", ")}<br>
                 <ul class="small-list">
-                    <li>Use Step Variable Axis to show another variable as bottom labels.</li>
-                    <li>Use Uniform placement for clean visual spacing.</li>
-                    <li>Use Data group positions for true experimental step positions.</li>
-                    <li>Use Custom positions when you need exact label locations.</li>
+                    <li>The main X scale controls the top axis and bottom label positions.</li>
+                    <li>Bottom custom label positions must use the same unit as the main X variable.</li>
+                    <li>Typing custom bottom labels switches bottom label mode to Custom labels.</li>
+                    <li>Typing bottom label positions switches placement to Custom positions.</li>
                     <li>X and Y ticks can be auto, uniform interval, or custom positions.</li>
                     <li>Do not use secondary curve mode together with group, summary, or step-axis mode.</li>
                 </ul>
@@ -1374,6 +1383,66 @@
 
     stepAxisCheck.addEventListener("change", () => {
         toggleSecondaryOptions();
+    });
+
+    stepAxisCustomLabelsInput.addEventListener("input", () => {
+        if (stepAxisCustomLabelsInput.value.trim() !== "") {
+            stepAxisModeSelect.value = "uniform_custom";
+        }
+    });
+
+    stepAxisCustomPositionsInput.addEventListener("input", () => {
+        if (stepAxisCustomPositionsInput.value.trim() !== "") {
+            stepAxisPlacementSelect.value = "custom_positions";
+        }
+    });
+
+    xMajorIntervalInput.addEventListener("input", () => {
+        if (xMajorIntervalInput.value.trim() !== "") {
+            xTickModeSelect.value = "uniform";
+        }
+    });
+
+    xMinorIntervalInput.addEventListener("input", () => {
+        if (xMinorIntervalInput.value.trim() !== "") {
+            xTickModeSelect.value = "uniform";
+        }
+    });
+
+    xCustomTicksInput.addEventListener("input", () => {
+        if (xCustomTicksInput.value.trim() !== "") {
+            xTickModeSelect.value = "custom";
+        }
+    });
+
+    xCustomTickLabelsInput.addEventListener("input", () => {
+        if (xCustomTickLabelsInput.value.trim() !== "") {
+            xTickModeSelect.value = "custom";
+        }
+    });
+
+    yMajorIntervalInput.addEventListener("input", () => {
+        if (yMajorIntervalInput.value.trim() !== "") {
+            yTickModeSelect.value = "uniform";
+        }
+    });
+
+    yMinorIntervalInput.addEventListener("input", () => {
+        if (yMinorIntervalInput.value.trim() !== "") {
+            yTickModeSelect.value = "uniform";
+        }
+    });
+
+    yCustomTicksInput.addEventListener("input", () => {
+        if (yCustomTicksInput.value.trim() !== "") {
+            yTickModeSelect.value = "custom";
+        }
+    });
+
+    yCustomTickLabelsInput.addEventListener("input", () => {
+        if (yCustomTickLabelsInput.value.trim() !== "") {
+            yTickModeSelect.value = "custom";
+        }
     });
 
     x2Select.addEventListener("change", () => {
