@@ -662,20 +662,20 @@ def _map_label_for_dataset(dataset, label_map, default_label):
 
 
 def _sequence_index_from_label(label):
-    label = Path(_text(label)).stem
+    stem = Path(_text(label)).stem
 
     patterns = [
-        r"(?:^|[_#\-\s])(\d+)$",
-        r"(?:^|[_#\-\s])(\d+)(?:[_#\-\s]*[A-Za-z]*)$"
+        r"#\s*(\d+)",
+        r"(?:^|[_\-\s])(\d+)$"
     ]
 
     for pattern in patterns:
-        match = re.search(pattern, label)
+        match = re.search(pattern, stem)
 
         if match:
             return int(match.group(1))
 
-    numbers = re.findall(r"\d+", label)
+    numbers = re.findall(r"\d+", stem)
 
     if numbers:
         return int(numbers[-1])
@@ -683,10 +683,32 @@ def _sequence_index_from_label(label):
     return 0
 
 
+def _is_reverse_segment_label(label):
+    stem = Path(_text(label)).stem.lower()
+
+    return bool(
+        re.search(r"(?:^|[_\-\s])b(?:[_#\-\s]|\d|$)", stem)
+        or re.search(r"chronoa_b", stem)
+        or re.search(r"chronoamperometry_b", stem)
+    )
+
+
+def _sequence_order_from_label(label):
+    sequence_index = _sequence_index_from_label(label)
+
+    if _is_reverse_segment_label(label):
+        return 10000 + sequence_index
+
+    return sequence_index
+
+
 def _replicate_group_from_label(label):
     stem = Path(_text(label)).stem
-    stem = re.sub(r"(?:[_#\-\s])\d+$", "", stem)
-    stem = re.sub(r"(?:[_#\-\s])\d+(?:[_#\-\s]*[A-Za-z]*)$", "", stem)
+    stem = re.sub(r"#\s*\d+\s*$", "", stem)
+    stem = re.sub(r"(?:[_\-\s])\d+\s*$", "", stem)
+    stem = re.sub(r"(?:[_\-\s])B\s*$", "", stem, flags=re.IGNORECASE)
+    stem = re.sub(r"CHRONOA_B", "CHRONOA", stem, flags=re.IGNORECASE)
+    stem = re.sub(r"CHRONOAMPEROMETRY_B", "CHRONOAMPEROMETRY", stem, flags=re.IGNORECASE)
     stem = stem.strip("_- ")
 
     return stem or Path(_text(label)).stem or "replicate"
@@ -714,34 +736,38 @@ def _stitch_local_time_to_global_time(
         }
 
     df[x_col] = pd.to_numeric(df[x_col], errors="coerce")
-    df["_sequence_index"] = df[replicate_col].map(_sequence_index_from_label)
-    df["_replicate_group"] = df[replicate_col].map(_replicate_group_from_label)
+    df["_source_dataset_label"] = df[replicate_col].astype(str)
+    df["_sequence_index"] = df["_source_dataset_label"].map(_sequence_index_from_label)
+    df["_sequence_order"] = df["_source_dataset_label"].map(_sequence_order_from_label)
+    df["_replicate_group"] = df["_source_dataset_label"].map(_replicate_group_from_label)
 
     stitched_parts = []
 
     for (condition, replicate_group), group in df.groupby([condition_col, "_replicate_group"], sort=False):
         pieces = []
 
-        for dataset_label, file_group in group.groupby(replicate_col, sort=False):
-            sequence_index = _sequence_index_from_label(dataset_label)
+        for source_label, file_group in group.groupby("_source_dataset_label", sort=False):
             local = file_group.copy()
-            local["_sequence_index"] = sequence_index
+            local["_sequence_order"] = _sequence_order_from_label(source_label)
+            local["_sequence_index"] = _sequence_index_from_label(source_label)
             pieces.append(local)
 
         pieces = sorted(
             pieces,
             key=lambda frame: (
-                int(frame["_sequence_index"].iloc[0]) if not frame.empty else 0,
-                str(frame[replicate_col].iloc[0]) if not frame.empty else ""
+                int(frame["_sequence_order"].iloc[0]) if not frame.empty else 0,
+                str(frame["_source_dataset_label"].iloc[0]) if not frame.empty else ""
             )
         )
 
         offset = 0.0
 
         for piece in pieces:
-            valid_x = piece[x_col].dropna()
+            valid_x = pd.to_numeric(piece[x_col], errors="coerce").dropna()
 
             if valid_x.empty:
+                piece["source_dataset_label"] = piece["_source_dataset_label"]
+                piece[replicate_col] = replicate_group
                 stitched_parts.append(piece)
                 continue
 
@@ -749,10 +775,11 @@ def _stitch_local_time_to_global_time(
             local_max = float(valid_x.max())
             local_span = max(local_max - local_min, 0.0)
 
-            piece[x_col] = piece[x_col] - local_min + offset
+            piece[x_col] = pd.to_numeric(piece[x_col], errors="coerce") - local_min + offset
+            piece["source_dataset_label"] = piece["_source_dataset_label"]
             piece[replicate_col] = replicate_group
             piece["sequence_index"] = int(piece["_sequence_index"].iloc[0])
-            piece["source_dataset_label"] = str(piece["dataset_label"].iloc[0]) if "dataset_label" in piece.columns else replicate_group
+            piece["sequence_order"] = int(piece["_sequence_order"].iloc[0])
 
             stitched_parts.append(piece)
 
@@ -766,7 +793,7 @@ def _stitch_local_time_to_global_time(
         }
 
     stitched = pd.concat(stitched_parts, ignore_index=True)
-    stitched = stitched.drop(columns=[col for col in ["_sequence_index", "_replicate_group"] if col in stitched.columns])
+    stitched = stitched.drop(columns=[col for col in ["_sequence_index", "_sequence_order", "_replicate_group", "_source_dataset_label"] if col in stitched.columns])
     stitched.to_csv(csv_path, index=False)
 
     summaries = []
@@ -780,7 +807,7 @@ def _stitch_local_time_to_global_time(
             "rows": int(len(group)),
             "x_min": float(x_values.min()) if not x_values.empty else None,
             "x_max": float(x_values.max()) if not x_values.empty else None,
-            "n_sequence_files": int(group["sequence_index"].nunique()) if "sequence_index" in group.columns else None
+            "n_sequence_files": int(group["sequence_order"].nunique()) if "sequence_order" in group.columns else None
         })
 
     return {
@@ -790,6 +817,7 @@ def _stitch_local_time_to_global_time(
         "replicate_col": replicate_col,
         "replicate_summaries": summaries
     }
+
 
 
 def _plot_defaults(params, dataset_id):
