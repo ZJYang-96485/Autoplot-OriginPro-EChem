@@ -1,6 +1,7 @@
 from pathlib import Path
 from datetime import datetime
 import re
+import pandas as pd
 
 from data_loader import save_cleaned_dataset
 from data_combiner import combine_file_paths
@@ -68,6 +69,75 @@ def _safe_name(value, default):
 
 def _timestamp():
     return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def _find_time_column(columns, requested_time_col=""):
+    requested_time_col = _text(requested_time_col)
+
+    if requested_time_col and requested_time_col in columns:
+        return requested_time_col
+
+    candidates = [
+        "global_time_min",
+        "T_s",
+        "Time_s",
+        "time_s",
+        "t_s",
+        "T",
+        "Time",
+        "time",
+        "Elapsed Time",
+        "Elapsed_Time"
+    ]
+
+    for candidate in candidates:
+        if candidate in columns:
+            return candidate
+
+    lower_lookup = {str(col).strip().lower(): col for col in columns}
+
+    for candidate in candidates:
+        key = candidate.lower()
+
+        if key in lower_lookup:
+            return lower_lookup[key]
+
+    for col in columns:
+        lower_col = str(col).strip().lower()
+
+        if "time" in lower_col or lower_col in {"t", "ts"}:
+            return col
+
+    return ""
+
+
+def _ensure_global_time_min(csv_path, requested_time_col=""):
+    csv_path = Path(csv_path)
+
+    if not csv_path.exists():
+        return False
+
+    df = pd.read_csv(csv_path)
+
+    if "global_time_min" in df.columns:
+        return True
+
+    time_col = _find_time_column(df.columns, requested_time_col)
+
+    if not time_col:
+        return False
+
+    time_values = pd.to_numeric(df[time_col], errors="coerce")
+    lower_time_col = str(time_col).strip().lower()
+
+    if "min" in lower_time_col:
+        df["global_time_min"] = time_values
+    else:
+        df["global_time_min"] = time_values / 60.0
+
+    df.to_csv(csv_path, index=False)
+
+    return True
 
 
 def _params(step):
@@ -442,6 +512,18 @@ def execute_workflow_plan(plan, context):
                 if not convert_potential and not convert_current:
                     raise ValueError("Variable conversion requires at least one enabled conversion.")
 
+                electrode_area_cm2 = _float(params.get("electrode_area_cm2"), 0)
+
+                if convert_current and electrode_area_cm2 <= 0:
+                    raise ValueError(
+                        "Current-density conversion needs electrode_area_cm2. "
+                        "Add electrode area to the AI workflow prompt and create the plan again."
+                    )
+
+                potential_col = _text(params.get("potential_col")) or "step_variable_value"
+                current_col = _text(params.get("current_col")) or "Im_A"
+                time_col = _text(params.get("time_col"))
+
                 output_path = _output_path(
                     processed_dir,
                     f"{output_name}_{Path(dataset['file_path']).stem}",
@@ -451,15 +533,16 @@ def execute_workflow_plan(plan, context):
                     input_path=Path(dataset["file_path"]),
                     output_path=output_path,
                     convert_potential=convert_potential,
-                    potential_col=_text(params.get("potential_col")) or "step_variable_value",
+                    potential_col=potential_col,
                     reference_offset_v=_float(params.get("reference_offset_v"), 0),
                     ph_value=_float(params.get("ph_value"), 0),
                     potential_output_col=_text(params.get("potential_output_col")) or "E_RHE",
                     convert_current=convert_current,
-                    current_col=_text(params.get("current_col")) or "Im_A",
-                    electrode_area_cm2=_float(params.get("electrode_area_cm2"), 1),
+                    current_col=current_col,
+                    electrode_area_cm2=electrode_area_cm2,
                     current_density_output_col=_text(params.get("current_density_output_col")) or "j_mA_cm2"
                 )
+                _ensure_global_time_min(output_path, time_col)
                 registered = state["register_dataset"](
                     file_path=output_path,
                     dataset_type="converted_data",
