@@ -597,12 +597,65 @@ def _get_dataset(state, dataset_id):
     return dataset
 
 
+
+
+def infer_condition_from_filename(filename):
+    name = _text(filename)
+    lowered = name.lower()
+
+    if not lowered:
+        return ""
+
+    if "no3" in lowered or "nano3" in lowered or "pbsno3" in lowered:
+        return "PBS+NaNO3"
+
+    if "pbs" in lowered:
+        return "PBS"
+
+    return ""
+
+
+def infer_condition_from_dataset(dataset):
+    for key in _dataset_keys_for_mapping(dataset):
+        condition = infer_condition_from_filename(key)
+
+        if condition:
+            return condition
+
+    return ""
+
+
+def infer_replicate_label_from_dataset(dataset):
+    for key in [
+        dataset.get("origin_file_name"),
+        dataset.get("origin_saved_name"),
+        dataset.get("file_name"),
+        Path(dataset.get("file_path", "")).name
+    ]:
+        key = _text(key)
+
+        if key:
+            return key
+
+    return Path(dataset.get("file_path", "")).stem
+
+
 def _map_condition_for_dataset(dataset, condition_map, default_condition):
+    deterministic_condition = infer_condition_from_dataset(dataset)
+
+    if deterministic_condition:
+        return deterministic_condition
+
     fallback = default_condition or dataset.get("condition") or dataset.get("description") or Path(dataset["file_path"]).stem
     return _match_mapping_value(dataset, condition_map, fallback)
 
 
 def _map_label_for_dataset(dataset, label_map, default_label):
+    deterministic_label = infer_replicate_label_from_dataset(dataset)
+
+    if deterministic_label:
+        return deterministic_label
+
     fallback = default_label or dataset.get("dataset_label") or dataset.get("origin_file_name") or dataset.get("file_name") or Path(dataset["file_path"]).stem
     return _match_mapping_value(dataset, label_map, fallback)
 
@@ -927,7 +980,11 @@ def execute_workflow_plan(plan, context):
             state["step_results"].append({
                 "step_id": step.get("step_id"),
                 "action": action,
-                "created_dataset_ids": [registered["dataset_id"]]
+                "created_dataset_ids": [registered["dataset_id"]],
+                "condition_counts": {
+                    condition: condition_labels.count(condition)
+                    for condition in sorted(set(condition_labels))
+                }
             })
 
         elif action == "average_replicates":
