@@ -49,7 +49,7 @@ mol L⁻¹
 
 s⁻¹
 
-3. AI Assistant Setup (Optional, Charge to OpenAI with a very small amount)
+4. AI Assistant Setup (Optional, Charge to OpenAI with a very small amount)
 
 The AI Plot Assistant uses the OpenAI API. Each user must **provide their own OpenAI API key**.
 
@@ -59,5 +59,21 @@ Create a local `.env` file in the project root:
 OPENAI_API_KEY=your_api_key_here
 AI_MODEL=gpt-5.4-mini
 
-4. Questions or Suggestions can be forwarded to joeyang2 AT illinois.edu
+
+5. AI Plotting Details
+
+The AI Plot Assistant supports several common scientific plotting style presets:
+
+- Nature-style figures
+- Science-style figures
+- ACS-style figures
+- RSC-style figures
+- Elsevier-style figures
+- IEEE-style figures
+
+These presets are intended to provide convenient starting points for scientific plotting. **They are not official journal templates**, so users should still check the final formatting requirements of the target journal before submission.
+
+Additional general presets include publication, thesis, presentation, poster, monochrome, colorblind-safe, and dark-background styles.
+
+6. Questions or Suggestions can be forwarded to joeyang2 AT illinois.edu
 
