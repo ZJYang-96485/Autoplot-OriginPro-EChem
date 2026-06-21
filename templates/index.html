@@ -262,10 +262,66 @@
             font-size: 13px;
         }
 
+
+        .workflow-layout {
+            display: grid;
+            grid-template-columns: 1.2fr 1fr;
+            gap: 18px;
+        }
+
+        .workflow-dataset-list {
+            max-height: 240px;
+            overflow-y: auto;
+            border: 1px solid #d8dee9;
+            border-radius: 8px;
+            padding: 10px;
+            background: #f8fafc;
+        }
+
+        .workflow-dataset-row {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 8px;
+            align-items: start;
+            padding: 6px 0;
+            border-bottom: 1px solid #e8edf3;
+            font-size: 13px;
+        }
+
+        .workflow-dataset-row:last-child {
+            border-bottom: none;
+        }
+
+        .workflow-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 12px;
+        }
+
+        .workflow-preview {
+            margin-top: 12px;
+            padding: 12px;
+            border-radius: 8px;
+            background: #13294B;
+            color: #ffffff;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            font-size: 13px;
+            min-height: 120px;
+        }
+
+        .workflow-result-link {
+            display: inline-block;
+            margin-top: 10px;
+            font-weight: 700;
+        }
+
         @media (max-width: 820px) {
             .grid,
             .form-grid,
-            .combine-row {
+            .combine-row,
+            .workflow-layout {
                 grid-template-columns: 1fr;
             }
 
@@ -294,6 +350,52 @@
     {% endwith %}
 
     <div class="grid">
+
+        <section class="card full-width">
+            <h2>AI Workflow Assistant</h2>
+
+            <div class="workflow-layout">
+                <div>
+                    <label for="workflow_prompt">Describe the complete workflow</label>
+                    <textarea id="workflow_prompt" placeholder="Example: I uploaded one PBS control and two PBS+NaNO3 replicates. Clean the files, convert current to j_mA_cm2, average the PBS+NaNO3 replicates, and generate a publication-style comparison plot."></textarea>
+
+                    <label for="workflow_files">Upload files for AI workflow</label>
+                    <input type="file" id="workflow_files" name="workflow_files" accept=".csv,.dat,.dta,.txt" multiple>
+
+                    <div class="workflow-actions">
+                        <button type="button" id="workflow_plan_button" onclick="createAIWorkflowPlan()">Create Workflow Plan</button>
+                        <button type="button" id="workflow_execute_button" onclick="executeAIWorkflow()" disabled>Run Approved Workflow</button>
+                    </div>
+
+                    <div id="workflow_status" class="ai-status">
+                        Upload files or select existing datasets, then describe what you want. The AI will create a workflow plan for review before anything is executed.
+                    </div>
+                </div>
+
+                <div>
+                    <label>Optional existing datasets for AI to use</label>
+                    <div class="workflow-dataset-list">
+                        {% for dataset in datasets %}
+                            <label class="workflow-dataset-row">
+                                <input type="checkbox" name="workflow_dataset_ids" value="{{ dataset.dataset_id }}">
+                                <span>
+                                    {{ dataset.file_name }}<br>
+                                    <span class="hint">{{ dataset.dataset_type }}</span>
+                                </span>
+                            </label>
+                        {% endfor %}
+                    </div>
+
+                    <p class="hint">Use this when the data was already uploaded, converted, combined, or averaged.</p>
+                </div>
+            </div>
+
+            <pre id="workflow_plan_preview" class="workflow-preview hidden"></pre>
+            <pre id="workflow_execute_result" class="workflow-preview hidden"></pre>
+
+            <p class="hint">The AI can plan cleaning, sequence stitching, variable conversion, dataset combining, replicate averaging, and plotting. It can only execute approved built-in functions.</p>
+        </section>
+
         <section class="card">
             <h2>Single File Upload</h2>
 
@@ -489,7 +591,7 @@
         <section class="card full-width">
             <h2>Average Replicates by Condition</h2>
 
-            <form action="{{ url_for('average_replicates_dataset') }}" method="post">
+            <form action="{{ url_for('average_replicates') }}" method="post">
                 <div class="form-grid">
                     <div class="form-grid-full">
                         <label for="average_dataset_id">Dataset to average</label>
@@ -1034,6 +1136,26 @@
                         <input type="number" id="legend_font_size" name="legend_font_size" min="6" max="60" step="1" value="{{ form_state.legend_font_size or '11' }}">
                     </div>
 
+
+                    <div>
+                        <label for="legend_location">Legend location</label>
+                        <select id="legend_location" name="legend_location">
+                            <option value="auto" {% if form_state.legend_location == "auto" or not form_state.legend_location %}selected{% endif %}>Auto: avoid data</option>
+                            <option value="best" {% if form_state.legend_location == "best" %}selected{% endif %}>Matplotlib best</option>
+                            <option value="upper right" {% if form_state.legend_location == "upper right" %}selected{% endif %}>Upper right</option>
+                            <option value="upper left" {% if form_state.legend_location == "upper left" %}selected{% endif %}>Upper left</option>
+                            <option value="lower right" {% if form_state.legend_location == "lower right" %}selected{% endif %}>Lower right</option>
+                            <option value="lower left" {% if form_state.legend_location == "lower left" %}selected{% endif %}>Lower left</option>
+                        </select>
+                    </div>
+
+                    <div class="form-grid-full">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="legend_frame" name="legend_frame" {% if form_state.legend_frame %}checked{% endif %}>
+                            Show legend frame
+                        </label>
+                    </div>
+
                     <div>
                         <label for="spine_width">Frame line width</label>
                         <input type="number" id="spine_width" name="spine_width" min="0.1" max="10" step="0.1" value="{{ form_state.spine_width or '1.2' }}">
@@ -1187,6 +1309,138 @@
 
 <script>
     const formState = {{ form_state | tojson }};
+
+
+    let latestAIWorkflowPlan = null;
+    let latestAIWorkflowUploads = [];
+
+    function getSelectedWorkflowDatasetIds() {
+        return Array.from(document.querySelectorAll('input[name="workflow_dataset_ids"]:checked'))
+            .map(input => input.value)
+            .filter(value => value);
+    }
+
+    function showWorkflowJson(element, data) {
+        element.textContent = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+        element.classList.remove("hidden");
+    }
+
+    async function createAIWorkflowPlan() {
+        const promptInput = document.getElementById("workflow_prompt");
+        const fileInput = document.getElementById("workflow_files");
+        const statusBox = document.getElementById("workflow_status");
+        const planBox = document.getElementById("workflow_plan_preview");
+        const resultBox = document.getElementById("workflow_execute_result");
+        const planButton = document.getElementById("workflow_plan_button");
+        const executeButton = document.getElementById("workflow_execute_button");
+
+        const prompt = promptInput.value.trim();
+
+        planBox.classList.add("hidden");
+        resultBox.classList.add("hidden");
+        executeButton.disabled = true;
+        latestAIWorkflowPlan = null;
+        latestAIWorkflowUploads = [];
+
+        if (!prompt) {
+            statusBox.textContent = "Please describe the workflow you want.";
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append("workflow_prompt", prompt);
+
+        Array.from(fileInput.files || []).forEach(file => {
+            formData.append("workflow_files", file);
+        });
+
+        getSelectedWorkflowDatasetIds().forEach(datasetId => {
+            formData.append("workflow_dataset_ids", datasetId);
+        });
+
+        statusBox.textContent = "Creating AI workflow plan...";
+        planButton.disabled = true;
+
+        try {
+            const response = await fetch("/api/ai/workflow-plan", {
+                method: "POST",
+                body: formData
+            });
+
+            const data = await response.json();
+
+            if (!response.ok || !data.ok) {
+                statusBox.textContent = data.error || "AI workflow planning failed.";
+                showWorkflowJson(planBox, data);
+                return;
+            }
+
+            latestAIWorkflowPlan = data.plan;
+            latestAIWorkflowUploads = data.uploaded_files || [];
+            showWorkflowJson(planBox, data.plan_text || data.plan);
+            statusBox.textContent = "Workflow plan created. Review the plan, then click Run Approved Workflow.";
+            executeButton.disabled = false;
+        } catch (error) {
+            statusBox.textContent = `AI workflow request failed: ${error.message}`;
+        } finally {
+            planButton.disabled = false;
+        }
+    }
+
+    async function executeAIWorkflow() {
+        const statusBox = document.getElementById("workflow_status");
+        const resultBox = document.getElementById("workflow_execute_result");
+        const executeButton = document.getElementById("workflow_execute_button");
+
+        resultBox.classList.add("hidden");
+
+        if (!latestAIWorkflowPlan) {
+            statusBox.textContent = "Create and review a workflow plan first.";
+            return;
+        }
+
+        statusBox.textContent = "Running approved workflow...";
+        executeButton.disabled = true;
+
+        try {
+            const response = await fetch("/api/ai/workflow-execute", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    approved: true,
+                    plan: latestAIWorkflowPlan,
+                    uploaded_files: latestAIWorkflowUploads
+                })
+            });
+
+            const data = await response.json();
+
+            showWorkflowJson(resultBox, data);
+
+            if (!response.ok || !data.ok) {
+                statusBox.textContent = data.error || "Workflow execution failed.";
+                return;
+            }
+
+            const plotUrls = data.plot_urls || [];
+            let message = "Workflow executed successfully.";
+
+            if (plotUrls.length > 0) {
+                message += ` Generated plot: ${plotUrls[plotUrls.length - 1]}`;
+            }
+
+            message += " Refresh the page to see newly created datasets in the dropdown menus.";
+            statusBox.textContent = message;
+        } catch (error) {
+            statusBox.textContent = `Workflow execution failed: ${error.message}`;
+        } finally {
+            executeButton.disabled = false;
+        }
+    }
+
+
 
     const datasetSelect = document.getElementById("dataset_id");
     const datasetInfoSelect = document.getElementById("dataset_info_select");
@@ -1636,7 +1890,18 @@
             return;
         }
 
-        element.checked = Boolean(value);
+        if (typeof value === "string") {
+            const lowerValue = value.trim().toLowerCase();
+
+            if (["false", "0", "no", "off", "none", "null", "n/a"].includes(lowerValue)) {
+                element.checked = false;
+            } else {
+                element.checked = true;
+            }
+        } else {
+            element.checked = Boolean(value);
+        }
+
         element.dispatchEvent(new Event("change", {bubbles: true}));
     }
 
@@ -1753,6 +2018,8 @@
         setSelectValueForAI("axis_label_weight", config.axis_label_weight);
         setInputValueForAI("title_size", config.title_size);
         setInputValueForAI("legend_font_size", config.legend_font_size);
+        setSelectValueForAI("legend_location", config.legend_location);
+        setCheckboxValueForAI("legend_frame", config.legend_frame);
         setInputValueForAI("spine_width", config.spine_width);
         setInputValueForAI("tick_width", config.tick_width);
         setInputValueForAI("tick_length", config.tick_length);

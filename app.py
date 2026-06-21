@@ -19,6 +19,8 @@ from sequential_tools import combine_sequential_file_paths
 from conversion_tools import convert_dataset_variables
 from replicate_tools import average_condition_replicates
 from ai_plot_assistant import parse_plot_request
+from ai_workflow_assistant import create_workflow_plan, describe_workflow_plan
+from workflow_executor import execute_workflow_plan
 
 app = Flask(__name__)
 app.secret_key = "dev"
@@ -243,6 +245,202 @@ def apply_axis_tick_control(
 
         return
 
+
+
+def choose_legend_location_from_axes(ax):
+    x_min, x_max = ax.get_xlim()
+    y_min, y_max = ax.get_ylim()
+
+    if x_max == x_min or y_max == y_min:
+        return "best"
+
+    points = []
+
+    for line in ax.lines:
+        x_data = line.get_xdata()
+        y_data = line.get_ydata()
+
+        for x, y in zip(x_data, y_data):
+            try:
+                x_norm = (float(x) - x_min) / (x_max - x_min)
+                y_norm = (float(y) - y_min) / (y_max - y_min)
+            except (TypeError, ValueError):
+                continue
+
+            if 0 <= x_norm <= 1 and 0 <= y_norm <= 1:
+                points.append((x_norm, y_norm))
+
+    for collection in ax.collections:
+        try:
+            offsets = collection.get_offsets()
+        except Exception:
+            offsets = []
+
+        for x, y in offsets:
+            try:
+                x_norm = (float(x) - x_min) / (x_max - x_min)
+                y_norm = (float(y) - y_min) / (y_max - y_min)
+            except (TypeError, ValueError):
+                continue
+
+            if 0 <= x_norm <= 1 and 0 <= y_norm <= 1:
+                points.append((x_norm, y_norm))
+
+    if not points:
+        return "best"
+
+    corner_boxes = {
+        "upper left": (0.00, 0.38, 0.62, 1.00),
+        "upper right": (0.62, 1.00, 0.62, 1.00),
+        "lower left": (0.00, 0.38, 0.00, 0.38),
+        "lower right": (0.62, 1.00, 0.00, 0.38)
+    }
+
+    scores = {}
+
+    for location, (x0, x1, y0, y1) in corner_boxes.items():
+        score = 0
+
+        for x, y in points:
+            if x0 <= x <= x1 and y0 <= y <= y1:
+                score += 1
+
+        scores[location] = score
+
+    return min(scores, key=scores.get)
+
+
+def build_file_summary_for_ai(file_path, original_name=None):
+    file_path = Path(file_path)
+    summary = {
+        "file_name": original_name or file_path.name,
+        "file_extension": file_path.suffix.lower().lstrip("."),
+        "rows": 0,
+        "columns": 0,
+        "column_names": [],
+        "numeric_columns": [],
+        "categorical_columns": [],
+        "dataset_type": "uploaded_file",
+        "description": "",
+        "preview": ""
+    }
+
+    try:
+        inspected = inspect_dataset(file_path)
+        summary.update({
+            "rows": inspected.get("rows", 0),
+            "columns": inspected.get("columns", 0),
+            "column_names": inspected.get("column_names", []),
+            "numeric_columns": inspected.get("numeric_columns", []),
+            "categorical_columns": inspected.get("categorical_columns", [])
+        })
+    except Exception as error:
+        summary["description"] = f"Inspection failed: {error}"
+
+    try:
+        preview_df = read_dataset(file_path).head(5)
+        summary["preview"] = preview_df.to_csv(index=False)
+    except Exception:
+        summary["preview"] = ""
+
+    return summary
+
+
+def build_dataset_summary_for_ai(dataset):
+    if not dataset:
+        return {}
+
+    file_path = Path(dataset.get("file_path", ""))
+    summary = {
+        "file_name": dataset.get("file_name", file_path.name),
+        "file_extension": file_path.suffix.lower().lstrip("."),
+        "rows": dataset.get("rows", 0),
+        "columns": dataset.get("columns", 0),
+        "column_names": dataset.get("column_names", []),
+        "numeric_columns": dataset.get("numeric_columns", []),
+        "categorical_columns": dataset.get("categorical_columns", []),
+        "dataset_type": dataset.get("dataset_type", ""),
+        "description": dataset.get("description", ""),
+        "dataset_id": dataset.get("dataset_id", ""),
+        "source": dataset.get("source", "")
+    }
+
+    try:
+        if file_path.exists():
+            preview_df = read_dataset(file_path).head(5)
+            summary["preview"] = preview_df.to_csv(index=False)
+        else:
+            summary["preview"] = ""
+    except Exception:
+        summary["preview"] = ""
+
+    return summary
+
+
+def save_ai_workflow_uploads(files):
+    create_dirs()
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    saved_files = []
+    file_summaries = []
+
+    for index, file in enumerate(files, start=1):
+        if file is None or not file.filename:
+            continue
+
+        if not is_supported_file(file.filename):
+            raise ValueError(f"Unsupported file type: {file.filename}")
+
+        safe_name = secure_filename(file.filename)
+        raw_path = UPLOADED_DATA_DIR / f"{timestamp}_ai_workflow_{index:03d}_{safe_name}"
+        file.save(raw_path)
+
+        saved_files.append({
+            "original_name": file.filename,
+            "saved_path": str(raw_path),
+            "saved_name": raw_path.name
+        })
+
+        file_summaries.append(
+            build_file_summary_for_ai(
+                file_path=raw_path,
+                original_name=file.filename
+            )
+        )
+
+    return saved_files, file_summaries
+
+
+def parse_dataset_ids_from_request(payload):
+    dataset_ids = []
+
+    if isinstance(payload, dict):
+        raw_ids = payload.get("dataset_ids", [])
+
+        if isinstance(raw_ids, str):
+            dataset_ids.extend([item.strip() for item in raw_ids.split(",") if item.strip()])
+        elif isinstance(raw_ids, list):
+            dataset_ids.extend([str(item).strip() for item in raw_ids if str(item).strip()])
+
+    form_ids = request.form.getlist("workflow_dataset_ids")
+
+    for item in form_ids:
+        if item:
+            dataset_ids.extend([value.strip() for value in str(item).split(",") if value.strip()])
+
+    return list(dict.fromkeys(dataset_ids))
+
+
+def build_selected_dataset_summaries(dataset_ids):
+    summaries = []
+
+    for dataset_id in dataset_ids:
+        dataset = get_dataset(dataset_id)
+
+        if dataset is not None:
+            summaries.append(build_dataset_summary_for_ai(dataset))
+
+    return summaries
 
 def register_dataset(file_path, dataset_type, source, uploaded_by="user", description=""):
     manifest = read_manifest()
@@ -669,7 +867,7 @@ def plot_grouped_curves(
         raise ValueError("No valid data points were found for the selected group-by plot.")
 
     for group_name, group in data.groupby(group_col, sort=False):
-        label = str(group_name)
+        label = normalize_matplotlib_text(str(group_name))
 
         if plot_type == "scatter":
             if group_color_mode == "same":
@@ -1080,6 +1278,8 @@ def normalize_matplotlib_text(value):
     text = re.sub(r"(?<!\$)\bcm-([123])\b", r"cm$^{-\1}$", text)
     text = re.sub(r"(?<!\$)\bm-([123])\b", r"m$^{-\1}$", text)
     text = text.replace("micro", r"$\mu$")
+    text = text.replace("NaNO3", r"NaNO$_3$")
+    text = text.replace("NO3", r"NO$_3$")
 
     return text
 
@@ -1176,6 +1376,8 @@ def create_plot(
     show_grid,
     title_size,
     legend_font_size,
+    legend_location,
+    legend_frame,
     figure_width,
     figure_height,
     figure_dpi,
@@ -1308,6 +1510,9 @@ def create_plot(
     tick_length = clamp_float(tick_length, 5, 1, 30)
     title_size = clamp_float(title_size, 18, 6, 80)
     legend_font_size = clamp_float(legend_font_size, 11, 6, 60)
+    allowed_legend_locations = {"auto", "best", "upper right", "upper left", "lower right", "lower left"}
+    legend_location = legend_location if legend_location in allowed_legend_locations else "best"
+    legend_frame = bool(legend_frame)
     axis_label_weight = "normal" if axis_label_weight == "normal" else "bold"
     tick_direction = tick_direction if tick_direction in ["in", "out", "inout"] else "in"
 
@@ -1590,7 +1795,17 @@ def create_plot(
 
     if show_legend and handles and any(labels):
         legend_title = group_label if group_col and group_label else None
-        legend = ax.legend(handles, labels, loc="best", title=legend_title, fontsize=legend_font_size)
+        resolved_legend_location = choose_legend_location_from_axes(ax) if legend_location == "auto" else legend_location
+        legend_kwargs = {
+            "loc": resolved_legend_location,
+            "fontsize": legend_font_size,
+            "frameon": legend_frame
+        }
+
+        if legend_title:
+            legend_kwargs["title"] = legend_title
+
+        legend = ax.legend(handles, labels, **legend_kwargs)
 
         if legend is not None and legend.get_title() is not None:
             legend.get_title().set_fontsize(legend_font_size)
@@ -1619,6 +1834,101 @@ def create_plot(
 
     return url_for("static", filename=f"generated_plots/{output_name}")
 
+
+
+@app.route("/api/ai/workflow-plan", methods=["POST"])
+def ai_workflow_plan():
+    try:
+        if request.is_json:
+            payload = request.get_json() or {}
+            user_request = (payload.get("workflow_prompt") or payload.get("message") or "").strip()
+            saved_files = []
+            file_summaries = []
+            dataset_ids = parse_dataset_ids_from_request(payload)
+        else:
+            payload = {}
+            user_request = (request.form.get("workflow_prompt") or request.form.get("message") or "").strip()
+            files = request.files.getlist("workflow_files") or request.files.getlist("files")
+            saved_files, file_summaries = save_ai_workflow_uploads(files)
+            dataset_ids = parse_dataset_ids_from_request(payload)
+
+        if not user_request:
+            return jsonify({
+                "ok": False,
+                "error": "Missing workflow prompt."
+            }), 400
+
+        selected_dataset_summaries = build_selected_dataset_summaries(dataset_ids)
+
+        if not selected_dataset_summaries:
+            selected_dataset_summaries = [
+                build_dataset_summary_for_ai(dataset)
+                for dataset in get_datasets()
+            ]
+
+        plan = create_workflow_plan(
+            user_request=user_request,
+            file_summaries=file_summaries,
+            current_datasets=selected_dataset_summaries
+        )
+
+        plan_text = describe_workflow_plan(plan)
+
+        return jsonify({
+            "ok": True,
+            "plan": plan,
+            "plan_text": plan_text,
+            "uploaded_files": saved_files
+        })
+
+    except Exception as exc:
+        return jsonify({
+            "ok": False,
+            "error": str(exc)
+        }), 500
+
+
+@app.route("/api/ai/workflow-execute", methods=["POST"])
+def ai_workflow_execute():
+    try:
+        payload = request.get_json() or {}
+        plan = payload.get("plan")
+        uploaded_files = payload.get("uploaded_files", [])
+        approved = payload.get("approved", False)
+
+        if not approved:
+            return jsonify({
+                "ok": False,
+                "error": "Workflow execution requires user approval."
+            }), 400
+
+        if not isinstance(plan, dict):
+            return jsonify({
+                "ok": False,
+                "error": "Missing workflow plan."
+            }), 400
+
+        result = execute_workflow_plan(
+            plan=plan,
+            context={
+                "uploaded_files": uploaded_files,
+                "processed_data_dir": PROCESSED_DATA_DIR,
+                "get_dataset": get_dataset,
+                "register_dataset": register_dataset,
+                "create_plot": create_plot
+            }
+        )
+
+        return jsonify({
+            "ok": True,
+            **result
+        })
+
+    except Exception as exc:
+        return jsonify({
+            "ok": False,
+            "error": str(exc)
+        }), 500
 
 @app.route("/api/ai/plot-config", methods=["POST"])
 def ai_plot_config():
@@ -1959,7 +2269,8 @@ def combine_existing_datasets():
     return redirect(url_for("index"))
 
 
-@app.route("/average_replicates", methods=["POST"])
+@app.route("/average_replicates", methods=["POST"], endpoint="average_replicates")
+@app.route("/average_replicates_dataset", methods=["POST"])
 def average_replicates_dataset():
     dataset_id = request.form.get("average_dataset_id")
     dataset = get_dataset(dataset_id)
@@ -2149,6 +2460,8 @@ def plot():
     show_grid = request.form.get("show_grid") == "on"
     title_size = request.form.get("title_size", 18)
     legend_font_size = request.form.get("legend_font_size", 11)
+    legend_location = request.form.get("legend_location", "best")
+    legend_frame = request.form.get("legend_frame") == "on"
 
     figure_width = request.form.get("figure_width", 8)
     figure_height = request.form.get("figure_height", 5)
@@ -2259,6 +2572,8 @@ def plot():
         "show_grid": show_grid,
         "title_size": title_size,
         "legend_font_size": legend_font_size,
+        "legend_location": legend_location,
+        "legend_frame": legend_frame,
         "figure_width": figure_width,
         "figure_height": figure_height,
         "figure_dpi": figure_dpi,
@@ -2347,6 +2662,8 @@ def plot():
             show_grid=show_grid,
             title_size=title_size,
             legend_font_size=legend_font_size,
+            legend_location=legend_location,
+            legend_frame=legend_frame,
             figure_width=figure_width,
             figure_height=figure_height,
             figure_dpi=figure_dpi,

@@ -35,19 +35,11 @@ Run 'pip install -r requirements.txt'
 
 Run 'python app.py'
 
-3. To use Subscript and superscript: Copy paste and edit here.
+3. To use Subscript and superscript: Copy paste and edit here. Author Note: Most of them have been adapted in the code.
 
-E / V vs. RHE
+E / V vs. RHE, NaNO₃, H₂O₂, mA cm⁻², mol L⁻¹, s⁻¹
 
-NaNO₃
-
-H₂O₂
-
-mA cm⁻²
-
-mol L⁻¹
-
-s⁻¹
+In addition, LaTeX is enabled.
 
 ## AI Assistant Setup (Optional, Charge to OpenAI with a very small amount)
 
@@ -78,7 +70,7 @@ These presets are intended to provide convenient starting points for scientific 
 
 Additional general presets include publication, thesis, presentation, poster, monochrome, colorblind-safe, and dark-background styles.
 
-## ## AI Plot Assistant Prompt Template
+## AI Plot Assistant Prompt Template
 
 The AI Plot Assistant is designed to help users fill plotting settings more efficiently. It is only for graph generation and plot formatting. It does not clean, merge, average, or restructure raw experimental data.
 
