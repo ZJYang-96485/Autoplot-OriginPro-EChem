@@ -1654,14 +1654,22 @@ def create_plot(
     if y_tick_mode not in TICK_MODES:
         y_tick_mode = "auto"
 
+    available_columns = ", ".join([str(column) for column in df.columns])
+
     if x_col not in df.columns:
-        raise ValueError("Primary X column not found.")
+        raise ValueError(
+            f"Primary X column '{x_col}' was not found. Available columns: {available_columns}"
+        )
 
     if y_col and y_col != "none" and y_col not in df.columns:
-        raise ValueError("Primary Y column not found.")
+        raise ValueError(
+            f"Primary Y column '{y_col}' was not found. Available columns: {available_columns}"
+        )
 
     if group_col is not None and group_col not in df.columns:
-        raise ValueError("Group-by column not found.")
+        raise ValueError(
+            f"Group-by column '{group_col}' was not found. Available columns: {available_columns}"
+        )
 
     if data_reduction == "summary":
         secondary_mode = "none"
@@ -2228,12 +2236,15 @@ def ai_plot_config():
         config = parse_plot_request(user_request, column_names)
         return jsonify({
             "ok": True,
-            "config": config
+            "config": config,
+            "available_columns": column_names
         })
     except Exception as exc:
         return jsonify({
             "ok": False,
-            "error": str(exc)
+            "error": str(exc),
+            "available_columns": column_names,
+            "hint": "Check that the selected dataset contains the requested Y column. Averaged datasets should contain y_mean; combined/converted datasets usually contain j_mA_cm2."
         }), 500
 
 @app.route("/", methods=["GET"])

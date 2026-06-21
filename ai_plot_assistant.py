@@ -5,7 +5,7 @@ from openai import OpenAI
 
 load_dotenv()
 
-AI_MODEL = os.getenv("AI_MODEL", "gpt-4o-mini")
+AI_MODEL = os.getenv("AI_PLOT_MODEL", os.getenv("AI_MODEL", "gpt-5.4"))
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 STYLE_PROFILES = [
@@ -691,6 +691,35 @@ def _apply_averaged_replicate_defaults(config, column_names, user_request):
     return config
 
 
+def _choose_default_y_column(column_names):
+    preferred = [
+        "y_mean",
+        "j_mA_cm2",
+        "j_A_cm2",
+        "current_density",
+        "current_density_mA_cm2",
+        "I_A",
+        "Im_A",
+        "Current",
+        "current",
+        "y"
+    ]
+
+    lookup = {str(column).strip().lower(): column for column in column_names}
+
+    for name in preferred:
+        if name.lower() in lookup:
+            return lookup[name.lower()]
+
+    for column in column_names:
+        lower = str(column).strip().lower()
+
+        if any(term in lower for term in ["j_", "current", "im_", "i_", "response", "signal"]):
+            return column
+
+    return "none"
+
+
 def _validate_config(config, column_names):
     config["x_column"] = _match_column(config.get("x_column"), column_names, allow_none=False)
     config["y_column"] = _match_column(config.get("y_column"), column_names, allow_none=True)
@@ -711,7 +740,16 @@ def _validate_config(config, column_names):
         config["y_label"] = config["y_label"] or "Count"
 
     if config["plot_type"] in {"line", "line_scatter", "scatter"} and config["y_column"] == "none":
-        raise ValueError("Line and scatter plots require a valid Y column.")
+        fallback_y = _choose_default_y_column(column_names)
+
+        if fallback_y != "none":
+            config["y_column"] = fallback_y
+        else:
+            available_columns = ", ".join(column_names)
+            raise ValueError(
+                "Line and scatter plots require a valid Y column. "
+                f"No suitable default Y column was found. Available columns: {available_columns}"
+            )
 
     if config["x_min"] is not None and config["x_max"] is not None and config["x_min"] >= config["x_max"]:
         raise ValueError("x_min must be smaller than x_max.")
@@ -739,7 +777,9 @@ def parse_plot_request(user_request, column_names):
             "You are an AI assistant for a scientific plotting platform. "
             "Convert the user's natural language request into a structured plotting configuration. "
             "Only choose column fields from the available column names. "
-            "Use 'none' for optional column fields that are not needed. "
+            "For line or scatter plots, always choose an existing Y column. "
+            "If y_mean exists, prefer y_mean for averaged datasets. If y_mean does not exist but j_mA_cm2 exists, use j_mA_cm2. "
+            "Use 'none' for optional column fields that are not needed, but never use 'none' for y_column in line or scatter plots. "
             "Use null for numeric, boolean, and color fields when the user did not specify them and no style profile is clearly requested. "
             "When the user asks for a journal or output style, select the closest style_profile from the supported profiles. "
             "Use style_profile='publication' for generic publication-quality scientific figures. "

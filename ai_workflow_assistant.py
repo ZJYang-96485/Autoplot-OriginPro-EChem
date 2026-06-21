@@ -7,7 +7,7 @@ from openai import OpenAI
 
 load_dotenv()
 
-AI_WORKFLOW_MODEL = os.getenv("AI_WORKFLOW_MODEL", os.getenv("AI_MODEL", "gpt-4o-mini"))
+AI_WORKFLOW_MODEL = os.getenv("AI_WORKFLOW_MODEL", os.getenv("AI_MODEL", "gpt-5.5"))
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 ALLOWED_ACTIONS = {
