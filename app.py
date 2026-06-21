@@ -40,7 +40,8 @@ PLOT_DIR = BASE_DIR / "static" / "generated_plots"
 PERSIST_USER_DATASETS = False
 SAVE_PLOTS_TO_DISK = False
 PURGE_NON_TEST_DATA_ON_STARTUP = True
-PURGE_USER_DATA_AFTER_WORKFLOW = True
+PURGE_USER_DATA_AFTER_WORKFLOW = False
+TEMP_DATASETS = {}
 
 ALLOWED_EXTENSIONS = {"csv", "dat", "dta", "txt"}
 SECONDARY_MODES = {"none", "same_y_different_x", "same_x_different_y"}
@@ -76,6 +77,7 @@ def clear_directory_contents(directory):
 
 def purge_user_data_files():
     create_dirs()
+    TEMP_DATASETS.clear()
 
     clear_directory_contents(UPLOADED_DATA_DIR)
     clear_directory_contents(PROCESSED_DATA_DIR)
@@ -576,6 +578,8 @@ def register_dataset(file_path, dataset_type, source, uploaded_by="user", descri
     if PERSIST_USER_DATASETS or dataset_type == "test_data":
         manifest["datasets"].append(dataset_info)
         write_manifest(manifest)
+    else:
+        TEMP_DATASETS[dataset_id] = dataset_info
 
     return dataset_info
 
@@ -620,10 +624,36 @@ def get_datasets():
             if PERSIST_USER_DATASETS or item.get("dataset_type") == "test_data":
                 datasets.append(item)
 
+    expired_temp_ids = []
+
+    for dataset_id, item in TEMP_DATASETS.items():
+        if not isinstance(item, dict):
+            expired_temp_ids.append(dataset_id)
+            continue
+
+        file_path = Path(item.get("file_path", ""))
+
+        if file_path.exists():
+            datasets.append(item)
+        else:
+            expired_temp_ids.append(dataset_id)
+
+    for dataset_id in expired_temp_ids:
+        TEMP_DATASETS.pop(dataset_id, None)
+
     return datasets
 
 
 def get_dataset(dataset_id):
+    if dataset_id in TEMP_DATASETS:
+        dataset = TEMP_DATASETS[dataset_id]
+        file_path = Path(dataset.get("file_path", ""))
+
+        if file_path.exists():
+            return dataset
+
+        TEMP_DATASETS.pop(dataset_id, None)
+
     datasets = get_datasets()
 
     for dataset in datasets:
@@ -2046,7 +2076,7 @@ def clear_user_data_route():
 
         return jsonify({
             "ok": True,
-            "message": "Uploaded data, processed data, generated plots, and non-test manifest entries were removed."
+            "message": "Temporary uploaded data, processed data, generated plots, and non-test in-memory dataset entries were removed."
         })
     except Exception as exc:
         return jsonify({
