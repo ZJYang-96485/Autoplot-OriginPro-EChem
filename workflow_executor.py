@@ -61,6 +61,54 @@ def _float(value, default):
         return default
 
 
+def _normalize_averaging_method(value):
+    value = _text(value).lower()
+
+    if value in {"exact", "exact_x", "exact x", "match", "matching"}:
+        return "exact"
+
+    if value in {
+        "interpolate",
+        "interpolation",
+        "interpolate_to_common_x_grid",
+        "interpolate to a common x grid",
+        "common x grid",
+        "common_grid",
+        "common grid",
+        "interp"
+    }:
+        return "interpolate"
+
+    if "interpol" in value or "common" in value:
+        return "interpolate"
+
+    if "exact" in value or "match" in value:
+        return "exact"
+
+    return "interpolate"
+
+
+def _normalize_x_grid_method(value):
+    value = _text(value).lower()
+
+    if value in {"overlap", "overlap range", "shared range", "shared", "common overlap"}:
+        return "overlap"
+
+    if value in {"union", "full", "full range", "all"}:
+        return "union"
+
+    if value in {"reference", "ref", "reference grid"}:
+        return "reference"
+
+    if "union" in value or "full" in value:
+        return "union"
+
+    if "reference" in value or value == "ref":
+        return "reference"
+
+    return "overlap"
+
+
 def _safe_name(value, default, max_length=80):
     value = _text(value) or default
     value = re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("_")
@@ -829,8 +877,8 @@ def execute_workflow_plan(plan, context):
                 y_col=_text(params.get("y_col")) or "j_mA_cm2",
                 condition_col=_text(params.get("condition_col")) or "condition",
                 replicate_col=_text(params.get("replicate_col")) or "dataset_label",
-                method=_text(params.get("averaging_method")) or "interpolate",
-                x_grid_method=_text(params.get("x_grid_method")) or "overlap",
+                method=_normalize_averaging_method(params.get("averaging_method")),
+                x_grid_method=_normalize_x_grid_method(params.get("x_grid_method")),
                 grid_points=_int(params.get("grid_points"), 500),
                 x_round_decimals=_int(params.get("x_round_decimals"), 6),
                 min_replicates=_int(params.get("min_replicates"), 1)
