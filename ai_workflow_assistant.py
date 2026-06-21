@@ -183,6 +183,15 @@ def compact_file_summaries(file_summaries):
     compact = []
 
     for item in file_summaries or []:
+        if isinstance(item, str):
+            item = {
+                "file_name": item,
+                "description": item
+            }
+
+        if not isinstance(item, dict):
+            continue
+
         compact.append({
             "file_name": _clean_text(item.get("file_name") or item.get("name")),
             "file_extension": _clean_text(item.get("file_extension") or item.get("extension")),
@@ -197,6 +206,44 @@ def compact_file_summaries(file_summaries):
         })
 
     return compact
+
+
+def normalize_file_condition_map(value):
+    if value is None:
+        return []
+
+    if isinstance(value, dict):
+        value = [value]
+
+    if isinstance(value, str):
+        return [
+            {
+                "file_name": value,
+                "condition": "",
+                "dataset_label": ""
+            }
+        ]
+
+    if not isinstance(value, list):
+        return []
+
+    normalized = []
+
+    for item in value:
+        if isinstance(item, str):
+            normalized.append({
+                "file_name": item,
+                "condition": "",
+                "dataset_label": ""
+            })
+        elif isinstance(item, dict):
+            normalized.append({
+                "file_name": _clean_text(item.get("file_name")),
+                "condition": _clean_text(item.get("condition")),
+                "dataset_label": _clean_text(item.get("dataset_label"))
+            })
+
+    return normalized
 
 
 def validate_workflow_plan(plan):
@@ -221,6 +268,13 @@ def validate_workflow_plan(plan):
         step["input_files"] = step.get("input_files") or []
         step["input_dataset_ids"] = step.get("input_dataset_ids") or []
         step["parameters"] = step.get("parameters") or {}
+
+        if not isinstance(step["parameters"], dict):
+            step["parameters"] = {}
+
+        step["parameters"]["file_condition_map"] = normalize_file_condition_map(
+            step["parameters"].get("file_condition_map")
+        )
         step["review_required"] = bool(step.get("review_required", True))
         step["user_confirmation_needed"] = [
             _clean_text(item)

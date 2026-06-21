@@ -350,6 +350,17 @@ def build_dataset_summary_for_ai(dataset):
     if not dataset:
         return {}
 
+    if isinstance(dataset, str):
+        dataset = {
+            "file_name": Path(dataset).name,
+            "file_path": dataset,
+            "dataset_type": "unknown",
+            "description": dataset
+        }
+
+    if not isinstance(dataset, dict):
+        return {}
+
     file_path = Path(dataset.get("file_path", ""))
     summary = {
         "file_name": dataset.get("file_name", file_path.name),
@@ -450,10 +461,39 @@ def extract_workflow_mapping_preview(plan):
         return preview
 
     for step in plan.get("steps", []):
+        if not isinstance(step, dict):
+            continue
+
         params = step.get("parameters") or {}
+
+        if not isinstance(params, dict):
+            continue
+
         file_condition_map = params.get("file_condition_map") or []
 
+        if isinstance(file_condition_map, dict):
+            file_condition_map = [file_condition_map]
+
+        if isinstance(file_condition_map, str):
+            file_condition_map = [
+                {
+                    "file_name": file_condition_map,
+                    "condition": "",
+                    "dataset_label": ""
+                }
+            ]
+
         for item in file_condition_map:
+            if isinstance(item, str):
+                item = {
+                    "file_name": item,
+                    "condition": "",
+                    "dataset_label": ""
+                }
+
+            if not isinstance(item, dict):
+                continue
+
             preview.append({
                 "step_id": step.get("step_id"),
                 "action": step.get("action", ""),
@@ -517,6 +557,9 @@ def get_datasets():
     datasets = []
 
     for item in manifest["datasets"]:
+        if not isinstance(item, dict):
+            continue
+
         file_path = Path(item.get("file_path", ""))
 
         if file_path.exists():
