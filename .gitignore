@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+.venv/
+venv/
+.env
+
+data_storage/metadata/dataset_manifest.json
+data_storage/temp/
+data_storage/cache/
+
+static/generated_plots/
+results/
