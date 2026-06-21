@@ -194,6 +194,26 @@ def parse_csv_floats(value):
     return numbers
 
 
+
+def get_column_series(df, column):
+    if column in [None, "", "none"]:
+        return pd.Series(dtype="float64")
+
+    if column not in df.columns:
+        return pd.Series(dtype="float64")
+
+    values = df.loc[:, column]
+
+    if isinstance(values, pd.DataFrame):
+        values = values.iloc[:, 0]
+
+    return values
+
+
+def get_numeric_series(df, column):
+    return pd.to_numeric(get_column_series(df, column), errors="coerce")
+
+
 def format_step_value(value, decimal_places):
     rounded = round(float(value), decimal_places)
 
@@ -230,7 +250,7 @@ def evenly_select_records(records, target_count):
 
 
 def get_axis_x_range(axis_df, x_col, x_min, x_max, ax):
-    data_x = pd.to_numeric(axis_df[x_col], errors="coerce").dropna()
+    data_x = get_numeric_series(axis_df, x_col).dropna()
 
     if x_min is not None:
         x_start = x_min
@@ -753,14 +773,14 @@ def summarize_by_group(df, x_col, y_col, group_col, x_method, y_method, tail_fra
 
         row = {
             group_col: group_name,
-            x_col: summary_value(pd.to_numeric(group[x_col], errors="coerce"), x_method, tail_fraction),
-            y_col: summary_value(pd.to_numeric(group[y_col], errors="coerce"), y_method, tail_fraction)
+            x_col: summary_value(get_numeric_series(group, x_col), x_method, tail_fraction),
+            y_col: summary_value(get_numeric_series(group, y_col), y_method, tail_fraction)
         }
 
         for column in keep_columns:
             if column in group.columns and column not in row:
                 if column in ["step_variable_value", "E_RHE"]:
-                    row[column] = pd.to_numeric(group[column], errors="coerce").mean()
+                    row[column] = get_numeric_series(group, column).mean()
                 else:
                     row[column] = group[column].iloc[0]
 
@@ -1249,8 +1269,8 @@ def build_auto_step_records(axis_df, x_col, step_value_col, step_group_col, deci
     records = []
 
     for group_value, group in data.groupby(step_group_col, sort=True):
-        x_value = pd.to_numeric(group[x_col], errors="coerce").mean()
-        step_value = pd.to_numeric(group[step_value_col], errors="coerce").mean()
+        x_value = get_numeric_series(group, x_col).mean()
+        step_value = get_numeric_series(group, step_value_col).mean()
 
         if pd.notna(x_value) and pd.notna(step_value):
             records.append({
