@@ -49,7 +49,7 @@ mol L⁻¹
 
 s⁻¹
 
-4. AI Assistant Setup (Optional, Charge to OpenAI with a very small amount)
+## AI Assistant Setup (Optional, Charge to OpenAI with a very small amount)
 
 The AI Plot Assistant uses the OpenAI API. Each user must **provide their own OpenAI API key**.
 
@@ -63,7 +63,7 @@ AI_MODEL=gpt-5.4-mini
 If you are new to the OpenAI API, go to `https://platform.openai.com` and create your own API key. You also need to set up billing or add credits in your OpenAI API account before the assistant can make requests.
 
 
-5. AI Plotting Details
+## AI Plotting Details
 
 The AI Plot Assistant supports several common scientific plotting style presets:
 
@@ -78,5 +78,5 @@ These presets are intended to provide convenient starting points for scientific 
 
 Additional general presets include publication, thesis, presentation, poster, monochrome, colorblind-safe, and dark-background styles.
 
-6. Questions or Suggestions can be forwarded to joeyang2 AT illinois.edu
+### Questions or Suggestions can be forwarded to joeyang2 AT illinois.edu
 
