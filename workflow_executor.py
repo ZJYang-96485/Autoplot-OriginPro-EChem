@@ -660,6 +660,138 @@ def _map_label_for_dataset(dataset, label_map, default_label):
     return _match_mapping_value(dataset, label_map, fallback)
 
 
+
+def _sequence_index_from_label(label):
+    label = Path(_text(label)).stem
+
+    patterns = [
+        r"(?:^|[_#\-\s])(\d+)$",
+        r"(?:^|[_#\-\s])(\d+)(?:[_#\-\s]*[A-Za-z]*)$"
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, label)
+
+        if match:
+            return int(match.group(1))
+
+    numbers = re.findall(r"\d+", label)
+
+    if numbers:
+        return int(numbers[-1])
+
+    return 0
+
+
+def _replicate_group_from_label(label):
+    stem = Path(_text(label)).stem
+    stem = re.sub(r"(?:[_#\-\s])\d+$", "", stem)
+    stem = re.sub(r"(?:[_#\-\s])\d+(?:[_#\-\s]*[A-Za-z]*)$", "", stem)
+    stem = stem.strip("_- ")
+
+    return stem or Path(_text(label)).stem or "replicate"
+
+
+def _stitch_local_time_to_global_time(
+    csv_path,
+    x_col="global_time_min",
+    condition_col="condition",
+    replicate_col="dataset_label"
+):
+    csv_path = Path(csv_path)
+
+    if not csv_path.exists():
+        return {}
+
+    df = pd.read_csv(csv_path)
+
+    required = {x_col, condition_col, replicate_col}
+
+    if not required.issubset(set(df.columns)):
+        return {
+            "stitched": False,
+            "reason": f"Missing required columns for stitching: {', '.join(sorted(required - set(df.columns)))}"
+        }
+
+    df[x_col] = pd.to_numeric(df[x_col], errors="coerce")
+    df["_sequence_index"] = df[replicate_col].map(_sequence_index_from_label)
+    df["_replicate_group"] = df[replicate_col].map(_replicate_group_from_label)
+
+    stitched_parts = []
+
+    for (condition, replicate_group), group in df.groupby([condition_col, "_replicate_group"], sort=False):
+        pieces = []
+
+        for dataset_label, file_group in group.groupby(replicate_col, sort=False):
+            sequence_index = _sequence_index_from_label(dataset_label)
+            local = file_group.copy()
+            local["_sequence_index"] = sequence_index
+            pieces.append(local)
+
+        pieces = sorted(
+            pieces,
+            key=lambda frame: (
+                int(frame["_sequence_index"].iloc[0]) if not frame.empty else 0,
+                str(frame[replicate_col].iloc[0]) if not frame.empty else ""
+            )
+        )
+
+        offset = 0.0
+
+        for piece in pieces:
+            valid_x = piece[x_col].dropna()
+
+            if valid_x.empty:
+                stitched_parts.append(piece)
+                continue
+
+            local_min = float(valid_x.min())
+            local_max = float(valid_x.max())
+            local_span = max(local_max - local_min, 0.0)
+
+            piece[x_col] = piece[x_col] - local_min + offset
+            piece[replicate_col] = replicate_group
+            piece["sequence_index"] = int(piece["_sequence_index"].iloc[0])
+            piece["source_dataset_label"] = str(piece["dataset_label"].iloc[0]) if "dataset_label" in piece.columns else replicate_group
+
+            stitched_parts.append(piece)
+
+            if local_span > 0:
+                offset += local_span
+
+    if not stitched_parts:
+        return {
+            "stitched": False,
+            "reason": "No rows were available for stitching."
+        }
+
+    stitched = pd.concat(stitched_parts, ignore_index=True)
+    stitched = stitched.drop(columns=[col for col in ["_sequence_index", "_replicate_group"] if col in stitched.columns])
+    stitched.to_csv(csv_path, index=False)
+
+    summaries = []
+
+    for (condition, replicate), group in stitched.groupby([condition_col, replicate_col], sort=False):
+        x_values = pd.to_numeric(group[x_col], errors="coerce").dropna()
+
+        summaries.append({
+            "condition": str(condition),
+            "replicate": str(replicate),
+            "rows": int(len(group)),
+            "x_min": float(x_values.min()) if not x_values.empty else None,
+            "x_max": float(x_values.max()) if not x_values.empty else None,
+            "n_sequence_files": int(group["sequence_index"].nunique()) if "sequence_index" in group.columns else None
+        })
+
+    return {
+        "stitched": True,
+        "x_col": x_col,
+        "condition_col": condition_col,
+        "replicate_col": replicate_col,
+        "replicate_summaries": summaries
+    }
+
+
 def _plot_defaults(params, dataset_id):
     return {
         "dataset_id": dataset_id,
@@ -969,6 +1101,12 @@ def execute_workflow_plan(plan, context):
                 condition_labels=condition_labels,
                 dataset_labels=dataset_labels
             )
+            stitching_summary = _stitch_local_time_to_global_time(
+                csv_path=output_path,
+                x_col=_text(params.get("x_col")) or "global_time_min",
+                condition_col=_text(params.get("condition_col")) or "condition",
+                replicate_col=_text(params.get("replicate_col")) or "dataset_label"
+            )
             registered = state["register_dataset"](
                 file_path=output_path,
                 dataset_type="combined_data",
@@ -984,7 +1122,8 @@ def execute_workflow_plan(plan, context):
                 "condition_counts": {
                     condition: condition_labels.count(condition)
                     for condition in sorted(set(condition_labels))
-                }
+                },
+                "stitching_summary": stitching_summary
             })
 
         elif action == "average_replicates":
