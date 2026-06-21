@@ -140,6 +140,179 @@ def _ensure_global_time_min(csv_path, requested_time_col=""):
     return True
 
 
+
+def _find_numeric_column(columns, requested_col, candidates, contains_terms):
+    requested_col = _text(requested_col)
+
+    if requested_col and requested_col in columns:
+        return requested_col
+
+    lower_lookup = {str(col).strip().lower(): col for col in columns}
+
+    if requested_col and requested_col.lower() in lower_lookup:
+        return lower_lookup[requested_col.lower()]
+
+    for candidate in candidates:
+        if candidate in columns:
+            return candidate
+
+        lower_candidate = candidate.lower()
+
+        if lower_candidate in lower_lookup:
+            return lower_lookup[lower_candidate]
+
+    for col in columns:
+        lower_col = str(col).strip().lower()
+
+        if any(term in lower_col for term in contains_terms):
+            return col
+
+    return ""
+
+
+def _find_current_column(columns, requested_col=""):
+    return _find_numeric_column(
+        columns,
+        requested_col,
+        [
+            "Im_A",
+            "Im",
+            "I_A",
+            "I",
+            "Current_A",
+            "Current",
+            "current",
+            "i",
+            "I/mA",
+            "Current_mA"
+        ],
+        ["current", "im", "i/a", "i_ma", "ma"]
+    )
+
+
+def _find_potential_column(columns, requested_col=""):
+    return _find_numeric_column(
+        columns,
+        requested_col,
+        [
+            "Vf_V_vs_Ref",
+            "Vf",
+            "Ewe/V",
+            "Ewe",
+            "Potential_V",
+            "Potential",
+            "E_V",
+            "E",
+            "Voltage",
+            "V"
+        ],
+        ["potential", "vf", "ewe", "voltage", "e/v"]
+    )
+
+
+def _read_csv_relaxed(path):
+    path = Path(path)
+
+    try:
+        return pd.read_csv(path)
+    except Exception:
+        pass
+
+    for sep in ["\t", ";", r"\s+"]:
+        try:
+            return pd.read_csv(path, sep=sep, engine="python")
+        except Exception:
+            continue
+
+    raise ValueError(f"Could not read dataset file for conversion: {path}")
+
+
+def _create_converted_dataset(
+    input_path,
+    output_path,
+    convert_potential,
+    potential_col,
+    potential_output_col,
+    reference_offset_v,
+    ph_value,
+    convert_current,
+    current_col,
+    current_density_output_col,
+    electrode_area_cm2,
+    time_col
+):
+    input_path = Path(input_path)
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    df = _read_csv_relaxed(input_path)
+
+    if df.empty:
+        raise ValueError(f"Input dataset is empty: {input_path}")
+
+    columns = list(df.columns)
+
+    resolved_time_col = _find_time_column(columns, time_col)
+
+    if not resolved_time_col:
+        raise ValueError(
+            "Time conversion failed because no time column was found. "
+            f"Available columns: {', '.join(map(str, columns))}"
+        )
+
+    time_values = pd.to_numeric(df[resolved_time_col], errors="coerce")
+    lower_time_col = str(resolved_time_col).strip().lower()
+
+    if "min" in lower_time_col:
+        df["global_time_min"] = time_values
+    else:
+        df["global_time_min"] = time_values / 60.0
+
+    if convert_potential:
+        resolved_potential_col = _find_potential_column(columns, potential_col)
+
+        if not resolved_potential_col:
+            raise ValueError(
+                "Potential conversion failed because no potential column was found. "
+                f"Available columns: {', '.join(map(str, columns))}"
+            )
+
+        potential_values = pd.to_numeric(df[resolved_potential_col], errors="coerce")
+        df[potential_output_col or "E_RHE"] = potential_values + reference_offset_v + 0.0591 * ph_value
+
+    if convert_current:
+        resolved_current_col = _find_current_column(columns, current_col)
+
+        if not resolved_current_col:
+            raise ValueError(
+                "Current conversion failed because no current column was found. "
+                f"Available columns: {', '.join(map(str, columns))}"
+            )
+
+        if electrode_area_cm2 <= 0:
+            raise ValueError("Current-density conversion requires electrode_area_cm2 > 0.")
+
+        current_values = pd.to_numeric(df[resolved_current_col], errors="coerce")
+        lower_current_col = str(resolved_current_col).strip().lower()
+
+        if "ma" in lower_current_col and "/a" not in lower_current_col:
+            df[current_density_output_col or "j_mA_cm2"] = current_values / electrode_area_cm2
+        else:
+            df[current_density_output_col or "j_mA_cm2"] = current_values * 1000.0 / electrode_area_cm2
+
+    df.to_csv(output_path, index=False)
+
+    if not output_path.exists():
+        raise ValueError(f"Conversion did not create output file: {output_path}")
+
+    return {
+        "time_col": resolved_time_col,
+        "potential_col": _find_potential_column(columns, potential_col) if convert_potential else "",
+        "current_col": _find_current_column(columns, current_col) if convert_current else "",
+        "output_path": str(output_path)
+    }
+
+
 def _params(step):
     params = step.get("parameters") or {}
 
@@ -529,20 +702,20 @@ def execute_workflow_plan(plan, context):
                     f"{output_name}_{Path(dataset['file_path']).stem}",
                     "converted"
                 )
-                convert_dataset_variables(
+                conversion_summary = _create_converted_dataset(
                     input_path=Path(dataset["file_path"]),
                     output_path=output_path,
                     convert_potential=convert_potential,
                     potential_col=potential_col,
+                    potential_output_col=_text(params.get("potential_output_col")) or "E_RHE",
                     reference_offset_v=_float(params.get("reference_offset_v"), 0),
                     ph_value=_float(params.get("ph_value"), 0),
-                    potential_output_col=_text(params.get("potential_output_col")) or "E_RHE",
                     convert_current=convert_current,
                     current_col=current_col,
+                    current_density_output_col=_text(params.get("current_density_output_col")) or "j_mA_cm2",
                     electrode_area_cm2=electrode_area_cm2,
-                    current_density_output_col=_text(params.get("current_density_output_col")) or "j_mA_cm2"
+                    time_col=time_col
                 )
-                _ensure_global_time_min(output_path, time_col)
                 registered = state["register_dataset"](
                     file_path=output_path,
                     dataset_type="converted_data",
