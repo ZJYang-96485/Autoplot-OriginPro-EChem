@@ -405,6 +405,94 @@ def _index_uploaded_files(uploaded_files):
     return index
 
 
+def _index_original_names_by_path(uploaded_files):
+    index = {}
+
+    for item in uploaded_files or []:
+        original_name = _text(item.get("original_name"))
+        saved_path = _text(item.get("saved_path"))
+
+        if not original_name or not saved_path:
+            continue
+
+        path = Path(saved_path)
+
+        for key in [str(path), path.name]:
+            index[key] = original_name
+
+        try:
+            index[str(path.resolve())] = original_name
+        except Exception:
+            pass
+
+    return index
+
+
+def _get_original_name_for_path(state, path):
+    path = Path(path)
+
+    for key in [str(path), path.name]:
+        if key in state.get("original_name_by_path", {}):
+            return state["original_name_by_path"][key]
+
+    try:
+        resolved = str(path.resolve())
+
+        if resolved in state.get("original_name_by_path", {}):
+            return state["original_name_by_path"][resolved]
+    except Exception:
+        pass
+
+    return path.name
+
+
+def _dataset_keys_for_mapping(dataset):
+    keys = [
+        dataset.get("origin_file_name"),
+        dataset.get("origin_saved_name"),
+        dataset.get("file_name"),
+        dataset.get("description"),
+        dataset.get("source"),
+        Path(dataset.get("file_path", "")).name,
+        Path(dataset.get("file_path", "")).stem
+    ]
+
+    source_chain = dataset.get("source_chain", [])
+
+    if isinstance(source_chain, list):
+        keys.extend(source_chain)
+
+    normalized = []
+
+    for key in keys:
+        key = _text(key)
+
+        if key:
+            normalized.append(key)
+
+    return normalized
+
+
+def _match_mapping_value(dataset, mapping, default_value):
+    keys = _dataset_keys_for_mapping(dataset)
+
+    for key in keys:
+        if key in mapping:
+            return mapping[key]
+
+    for mapping_key, mapping_value in mapping.items():
+        mapping_key = _text(mapping_key)
+
+        if not mapping_key:
+            continue
+
+        for key in keys:
+            if mapping_key in key or key in mapping_key:
+                return mapping_value
+
+    return default_value
+
+
 def _resolve_file_paths(step, state):
     index = state["uploaded_file_index"]
     input_files = step.get("input_files") or []
@@ -452,6 +540,8 @@ def _add_dataset_to_state(state, dataset):
     state["last_dataset_ids"] = [dataset_id]
 
     for key in [
+        dataset.get("origin_file_name"),
+        dataset.get("origin_saved_name"),
         dataset.get("file_name"),
         dataset.get("description"),
         dataset.get("source"),
@@ -508,39 +598,13 @@ def _get_dataset(state, dataset_id):
 
 
 def _map_condition_for_dataset(dataset, condition_map, default_condition):
-    keys = [
-        dataset.get("file_name"),
-        dataset.get("description"),
-        dataset.get("source"),
-        Path(dataset.get("file_path", "")).name,
-        Path(dataset.get("file_path", "")).stem
-    ]
-
-    for key in keys:
-        key = _text(key)
-
-        if key in condition_map:
-            return condition_map[key]
-
-    return default_condition or dataset.get("description") or Path(dataset["file_path"]).stem
+    fallback = default_condition or dataset.get("condition") or dataset.get("description") or Path(dataset["file_path"]).stem
+    return _match_mapping_value(dataset, condition_map, fallback)
 
 
 def _map_label_for_dataset(dataset, label_map, default_label):
-    keys = [
-        dataset.get("file_name"),
-        dataset.get("description"),
-        dataset.get("source"),
-        Path(dataset.get("file_path", "")).name,
-        Path(dataset.get("file_path", "")).stem
-    ]
-
-    for key in keys:
-        key = _text(key)
-
-        if key in label_map:
-            return label_map[key]
-
-    return default_label or dataset.get("file_name") or Path(dataset["file_path"]).stem
+    fallback = default_label or dataset.get("dataset_label") or dataset.get("origin_file_name") or dataset.get("file_name") or Path(dataset["file_path"]).stem
+    return _match_mapping_value(dataset, label_map, fallback)
 
 
 def _plot_defaults(params, dataset_id):
@@ -641,6 +705,7 @@ def execute_workflow_plan(plan, context):
 
     state = {
         "uploaded_file_index": _index_uploaded_files(context.get("uploaded_files", [])),
+        "original_name_by_path": _index_original_names_by_path(context.get("uploaded_files", [])),
         "get_dataset": context["get_dataset"],
         "register_dataset": context["register_dataset"],
         "create_plot": context["create_plot"],
@@ -675,13 +740,17 @@ def execute_workflow_plan(plan, context):
                     "cleaned"
                 )
                 save_cleaned_dataset(raw_path, output_path)
+                original_name = _get_original_name_for_path(state, raw_path)
                 dataset = state["register_dataset"](
                     file_path=output_path,
                     dataset_type="processed_data",
-                    source=f"AI workflow cleaned from {raw_path.name}",
+                    source=f"AI workflow cleaned from {original_name}",
                     uploaded_by="ai_workflow",
                     description=output_name
                 )
+                dataset["origin_file_name"] = original_name
+                dataset["origin_saved_name"] = raw_path.name
+                dataset["source_chain"] = [original_name, raw_path.name]
                 _add_dataset_to_state(state, dataset)
                 created_ids.append(dataset["dataset_id"])
 
@@ -783,10 +852,13 @@ def execute_workflow_plan(plan, context):
                 registered = state["register_dataset"](
                     file_path=output_path,
                     dataset_type="converted_data",
-                    source=f"AI workflow converted from {dataset.get('file_name', 'dataset')}",
+                    source=f"AI workflow converted from {dataset.get('origin_file_name') or dataset.get('file_name', 'dataset')}",
                     uploaded_by="ai_workflow",
                     description=output_name
                 )
+                registered["origin_file_name"] = dataset.get("origin_file_name") or dataset.get("file_name")
+                registered["origin_saved_name"] = dataset.get("origin_saved_name") or Path(dataset.get("file_path", "")).name
+                registered["source_chain"] = list(dataset.get("source_chain", [])) + [dataset.get("file_name", "")]
                 _add_dataset_to_state(state, registered)
                 created_ids.append(registered["dataset_id"])
 
