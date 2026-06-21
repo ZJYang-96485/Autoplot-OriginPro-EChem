@@ -442,6 +442,29 @@ def build_selected_dataset_summaries(dataset_ids):
 
     return summaries
 
+
+def extract_workflow_mapping_preview(plan):
+    preview = []
+
+    if not isinstance(plan, dict):
+        return preview
+
+    for step in plan.get("steps", []):
+        params = step.get("parameters") or {}
+        file_condition_map = params.get("file_condition_map") or []
+
+        for item in file_condition_map:
+            preview.append({
+                "step_id": step.get("step_id"),
+                "action": step.get("action", ""),
+                "file_name": item.get("file_name", ""),
+                "condition": item.get("condition", ""),
+                "dataset_label": item.get("dataset_label", "")
+            })
+
+    return preview
+
+
 def register_dataset(file_path, dataset_type, source, uploaded_by="user", description=""):
     manifest = read_manifest()
     data_info = inspect_dataset(file_path)
@@ -670,7 +693,15 @@ def apply_plot_style(
     show_left_ticks,
     show_right_ticks,
     show_grid,
-    title_size
+    title_size,
+    grid_axis="both",
+    grid_which="major",
+    major_grid_linestyle="solid",
+    minor_grid_linestyle="dashed",
+    major_grid_alpha=0.25,
+    minor_grid_alpha=0.12,
+    major_grid_width=0.7,
+    minor_grid_width=0.5
 ):
     ax.set_facecolor("white")
 
@@ -706,10 +737,37 @@ def apply_plot_style(
     ax.title.set_size(title_size)
     ax.title.set_weight(axis_label_weight)
 
+    ax.grid(False)
+
     if show_grid:
-        ax.grid(True, alpha=0.25)
-    else:
-        ax.grid(False)
+        if grid_axis not in {"x", "y", "both"}:
+            grid_axis = "both"
+
+        if grid_which not in {"major", "minor", "both"}:
+            grid_which = "major"
+
+        if grid_which in {"minor", "both"}:
+            ax.minorticks_on()
+
+        if grid_which in {"major", "both"}:
+            ax.grid(
+                True,
+                which="major",
+                axis=grid_axis,
+                linestyle=major_grid_linestyle,
+                linewidth=major_grid_width,
+                alpha=major_grid_alpha
+            )
+
+        if grid_which in {"minor", "both"}:
+            ax.grid(
+                True,
+                which="minor",
+                axis=grid_axis,
+                linestyle=minor_grid_linestyle,
+                linewidth=minor_grid_width,
+                alpha=minor_grid_alpha
+            )
 
 
 def style_secondary_axis(axis, axis_label_size, tick_label_size, axis_label_weight, spine_width, tick_width, tick_length, tick_direction):
@@ -1401,7 +1459,15 @@ def create_plot(
     step_axis_custom_positions,
     step_axis_label_rotation,
     step_axis_label_pad,
-    bottom_margin
+    bottom_margin,
+    grid_axis="both",
+    grid_which="major",
+    major_grid_linestyle="solid",
+    minor_grid_linestyle="dashed",
+    major_grid_alpha=0.25,
+    minor_grid_alpha=0.12,
+    major_grid_width=0.7,
+    minor_grid_width=0.5
 ):
     dataset = get_dataset(dataset_id)
 
@@ -1513,6 +1579,27 @@ def create_plot(
     allowed_legend_locations = {"auto", "best", "upper right", "upper left", "lower right", "lower left"}
     legend_location = legend_location if legend_location in allowed_legend_locations else "best"
     legend_frame = bool(legend_frame)
+
+    grid_axis = grid_axis if grid_axis in {"x", "y", "both"} else "both"
+    grid_which = grid_which if grid_which in {"major", "minor", "both"} else "major"
+
+    allowed_grid_linestyles = {
+        "solid": "solid",
+        "-": "solid",
+        "dashed": "dashed",
+        "--": "dashed",
+        "dotted": "dotted",
+        ":": "dotted",
+        "dashdot": "dashdot",
+        "-.": "dashdot"
+    }
+    major_grid_linestyle = allowed_grid_linestyles.get(str(major_grid_linestyle).strip().lower(), "solid")
+    minor_grid_linestyle = allowed_grid_linestyles.get(str(minor_grid_linestyle).strip().lower(), "dashed")
+    major_grid_alpha = clamp_float(major_grid_alpha, 0.25, 0.0, 1.0)
+    minor_grid_alpha = clamp_float(minor_grid_alpha, 0.12, 0.0, 1.0)
+    major_grid_width = clamp_float(major_grid_width, 0.7, 0.05, 5.0)
+    minor_grid_width = clamp_float(minor_grid_width, 0.5, 0.05, 5.0)
+
     axis_label_weight = "normal" if axis_label_weight == "normal" else "bold"
     tick_direction = tick_direction if tick_direction in ["in", "out", "inout"] else "in"
 
@@ -1692,7 +1779,15 @@ def create_plot(
         show_left_ticks=show_left_ticks,
         show_right_ticks=show_right_ticks,
         show_grid=show_grid,
-        title_size=title_size
+        title_size=title_size,
+        grid_axis=grid_axis,
+        grid_which=grid_which,
+        major_grid_linestyle=major_grid_linestyle,
+        minor_grid_linestyle=minor_grid_linestyle,
+        major_grid_alpha=major_grid_alpha,
+        minor_grid_alpha=minor_grid_alpha,
+        major_grid_width=major_grid_width,
+        minor_grid_width=minor_grid_width
     )
 
     step_top_axis = None
@@ -1873,11 +1968,13 @@ def ai_workflow_plan():
         )
 
         plan_text = describe_workflow_plan(plan)
+        mapping_preview = extract_workflow_mapping_preview(plan)
 
         return jsonify({
             "ok": True,
             "plan": plan,
             "plan_text": plan_text,
+            "mapping_preview": mapping_preview,
             "uploaded_files": saved_files
         })
 
@@ -2458,6 +2555,14 @@ def plot():
     show_left_ticks = request.form.get("show_left_ticks") == "on"
     show_right_ticks = request.form.get("show_right_ticks") == "on"
     show_grid = request.form.get("show_grid") == "on"
+    grid_axis = request.form.get("grid_axis", "both")
+    grid_which = request.form.get("grid_which", "major")
+    major_grid_linestyle = request.form.get("major_grid_linestyle", "solid")
+    minor_grid_linestyle = request.form.get("minor_grid_linestyle", "dashed")
+    major_grid_alpha = request.form.get("major_grid_alpha", 0.25)
+    minor_grid_alpha = request.form.get("minor_grid_alpha", 0.12)
+    major_grid_width = request.form.get("major_grid_width", 0.7)
+    minor_grid_width = request.form.get("minor_grid_width", 0.5)
     title_size = request.form.get("title_size", 18)
     legend_font_size = request.form.get("legend_font_size", 11)
     legend_location = request.form.get("legend_location", "best")
@@ -2570,6 +2675,14 @@ def plot():
         "show_left_ticks": show_left_ticks,
         "show_right_ticks": show_right_ticks,
         "show_grid": show_grid,
+        "grid_axis": grid_axis,
+        "grid_which": grid_which,
+        "major_grid_linestyle": major_grid_linestyle,
+        "minor_grid_linestyle": minor_grid_linestyle,
+        "major_grid_alpha": major_grid_alpha,
+        "minor_grid_alpha": minor_grid_alpha,
+        "major_grid_width": major_grid_width,
+        "minor_grid_width": minor_grid_width,
         "title_size": title_size,
         "legend_font_size": legend_font_size,
         "legend_location": legend_location,
@@ -2660,6 +2773,14 @@ def plot():
             show_left_ticks=show_left_ticks,
             show_right_ticks=show_right_ticks,
             show_grid=show_grid,
+            grid_axis=grid_axis,
+            grid_which=grid_which,
+            major_grid_linestyle=major_grid_linestyle,
+            minor_grid_linestyle=minor_grid_linestyle,
+            major_grid_alpha=major_grid_alpha,
+            minor_grid_alpha=minor_grid_alpha,
+            major_grid_width=major_grid_width,
+            minor_grid_width=minor_grid_width,
             title_size=title_size,
             legend_font_size=legend_font_size,
             legend_location=legend_location,

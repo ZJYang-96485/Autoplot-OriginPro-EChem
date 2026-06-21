@@ -317,6 +317,42 @@
             font-weight: 700;
         }
 
+
+        .workflow-mapping-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 12px;
+            font-size: 13px;
+        }
+
+        .workflow-mapping-table th,
+        .workflow-mapping-table td {
+            border: 1px solid #d8dee9;
+            padding: 8px;
+            text-align: left;
+            vertical-align: top;
+        }
+
+        .workflow-mapping-table th {
+            background: #f1f5f9;
+            font-weight: 700;
+        }
+
+        .workflow-mapping-scroll {
+            max-height: 280px;
+            overflow-y: auto;
+            margin-top: 12px;
+            border-radius: 8px;
+        }
+
+        .grid-control-block {
+            margin-top: 14px;
+            padding: 14px;
+            border: 1px solid #d8dee9;
+            border-radius: 10px;
+            background: #f8fafc;
+        }
+
         @media (max-width: 820px) {
             .grid,
             .form-grid,
@@ -391,6 +427,22 @@
             </div>
 
             <pre id="workflow_plan_preview" class="workflow-preview hidden"></pre>
+
+            <div id="workflow_mapping_container" class="workflow-mapping-scroll hidden">
+                <table class="workflow-mapping-table">
+                    <thead>
+                        <tr>
+                            <th>Step</th>
+                            <th>Action</th>
+                            <th>File</th>
+                            <th>Condition</th>
+                            <th>Dataset label</th>
+                        </tr>
+                    </thead>
+                    <tbody id="workflow_mapping_body"></tbody>
+                </table>
+            </div>
+
             <pre id="workflow_execute_result" class="workflow-preview hidden"></pre>
 
             <p class="hint">The AI can plan cleaning, sequence stitching, variable conversion, dataset combining, replicate averaging, and plotting. It can only execute approved built-in functions.</p>
@@ -1222,6 +1274,73 @@
                         </label>
                     </div>
 
+
+                    <div class="form-grid-full grid-control-block">
+                        <h3>Advanced Grid Controls</h3>
+
+                        <div class="form-grid">
+                            <div>
+                                <label for="grid_axis">Grid axis</label>
+                                <select id="grid_axis" name="grid_axis">
+                                    <option value="both" {% if form_state.grid_axis == "both" or not form_state.grid_axis %}selected{% endif %}>Both horizontal and vertical</option>
+                                    <option value="x" {% if form_state.grid_axis == "x" %}selected{% endif %}>Vertical grid only</option>
+                                    <option value="y" {% if form_state.grid_axis == "y" %}selected{% endif %}>Horizontal grid only</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label for="grid_which">Grid ticks</label>
+                                <select id="grid_which" name="grid_which">
+                                    <option value="major" {% if form_state.grid_which == "major" or not form_state.grid_which %}selected{% endif %}>Major only</option>
+                                    <option value="minor" {% if form_state.grid_which == "minor" %}selected{% endif %}>Minor only</option>
+                                    <option value="both" {% if form_state.grid_which == "both" %}selected{% endif %}>Major and minor</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label for="major_grid_linestyle">Major grid linestyle</label>
+                                <select id="major_grid_linestyle" name="major_grid_linestyle">
+                                    <option value="solid" {% if form_state.major_grid_linestyle == "solid" or not form_state.major_grid_linestyle %}selected{% endif %}>Solid</option>
+                                    <option value="dashed" {% if form_state.major_grid_linestyle == "dashed" %}selected{% endif %}>Dashed</option>
+                                    <option value="dotted" {% if form_state.major_grid_linestyle == "dotted" %}selected{% endif %}>Dotted</option>
+                                    <option value="dashdot" {% if form_state.major_grid_linestyle == "dashdot" %}selected{% endif %}>Dash-dot</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label for="minor_grid_linestyle">Minor grid linestyle</label>
+                                <select id="minor_grid_linestyle" name="minor_grid_linestyle">
+                                    <option value="solid" {% if form_state.minor_grid_linestyle == "solid" %}selected{% endif %}>Solid</option>
+                                    <option value="dashed" {% if form_state.minor_grid_linestyle == "dashed" or not form_state.minor_grid_linestyle %}selected{% endif %}>Dashed</option>
+                                    <option value="dotted" {% if form_state.minor_grid_linestyle == "dotted" %}selected{% endif %}>Dotted</option>
+                                    <option value="dashdot" {% if form_state.minor_grid_linestyle == "dashdot" %}selected{% endif %}>Dash-dot</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label for="major_grid_alpha">Major grid alpha</label>
+                                <input type="number" id="major_grid_alpha" name="major_grid_alpha" min="0" max="1" step="0.01" value="{{ form_state.major_grid_alpha or '0.25' }}">
+                            </div>
+
+                            <div>
+                                <label for="minor_grid_alpha">Minor grid alpha</label>
+                                <input type="number" id="minor_grid_alpha" name="minor_grid_alpha" min="0" max="1" step="0.01" value="{{ form_state.minor_grid_alpha or '0.12' }}">
+                            </div>
+
+                            <div>
+                                <label for="major_grid_width">Major grid width</label>
+                                <input type="number" id="major_grid_width" name="major_grid_width" min="0.05" max="5" step="0.05" value="{{ form_state.major_grid_width or '0.7' }}">
+                            </div>
+
+                            <div>
+                                <label for="minor_grid_width">Minor grid width</label>
+                                <input type="number" id="minor_grid_width" name="minor_grid_width" min="0.05" max="5" step="0.05" value="{{ form_state.minor_grid_width or '0.5' }}">
+                            </div>
+                        </div>
+
+                        <p class="hint">Reference-style vertical grid example: grid axis = vertical only, grid ticks = major and minor, major = solid alpha 0.22, minor = dashed alpha 0.14.</p>
+                    </div>
+
                     <div class="form-grid-full">
                         <h3 class="section-title">Secondary Axis Mode</h3>
                     </div>
@@ -1325,6 +1444,38 @@
         element.classList.remove("hidden");
     }
 
+
+    function renderWorkflowMappingPreview(rows) {
+        const container = document.getElementById("workflow_mapping_container");
+        const body = document.getElementById("workflow_mapping_body");
+
+        if (!container || !body) {
+            return;
+        }
+
+        body.innerHTML = "";
+
+        if (!rows || rows.length === 0) {
+            container.classList.add("hidden");
+            return;
+        }
+
+        rows.forEach(row => {
+            const tr = document.createElement("tr");
+
+            ["step_id", "action", "file_name", "condition", "dataset_label"].forEach(key => {
+                const td = document.createElement("td");
+                td.textContent = row[key] || "";
+                tr.appendChild(td);
+            });
+
+            body.appendChild(tr);
+        });
+
+        container.classList.remove("hidden");
+    }
+
+
     async function createAIWorkflowPlan() {
         const promptInput = document.getElementById("workflow_prompt");
         const fileInput = document.getElementById("workflow_files");
@@ -1338,6 +1489,7 @@
 
         planBox.classList.add("hidden");
         resultBox.classList.add("hidden");
+        renderWorkflowMappingPreview([]);
         executeButton.disabled = true;
         latestAIWorkflowPlan = null;
         latestAIWorkflowUploads = [];
@@ -1378,7 +1530,8 @@
             latestAIWorkflowPlan = data.plan;
             latestAIWorkflowUploads = data.uploaded_files || [];
             showWorkflowJson(planBox, data.plan_text || data.plan);
-            statusBox.textContent = "Workflow plan created. Review the plan, then click Run Approved Workflow.";
+            renderWorkflowMappingPreview(data.mapping_preview || []);
+            statusBox.textContent = "Workflow plan created. Review the plan and mapping table, then click Run Approved Workflow.";
             executeButton.disabled = false;
         } catch (error) {
             statusBox.textContent = `AI workflow request failed: ${error.message}`;
