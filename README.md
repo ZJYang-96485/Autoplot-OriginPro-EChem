@@ -60,6 +60,9 @@ OPENAI_API_KEY=your_api_key_here
 AI_MODEL=gpt-5.4-mini
 ```
 
+If you are new to the OpenAI API, go to `https://platform.openai.com` and create your own API key. You also need to set up billing or add credits in your OpenAI API account before the assistant can make requests.
+
+
 5. AI Plotting Details
 
 The AI Plot Assistant supports several common scientific plotting style presets:
