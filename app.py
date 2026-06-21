@@ -3,6 +3,9 @@ from datetime import datetime
 import json
 import uuid
 import re
+import io
+import base64
+import shutil
 
 import pandas as pd
 import matplotlib
@@ -34,6 +37,11 @@ METADATA_DIR = DATA_STORAGE_DIR / "metadata"
 MANIFEST_PATH = METADATA_DIR / "dataset_manifest.json"
 PLOT_DIR = BASE_DIR / "static" / "generated_plots"
 
+PERSIST_USER_DATASETS = False
+SAVE_PLOTS_TO_DISK = False
+PURGE_NON_TEST_DATA_ON_STARTUP = True
+PURGE_USER_DATA_AFTER_WORKFLOW = True
+
 ALLOWED_EXTENSIONS = {"csv", "dat", "dta", "txt"}
 SECONDARY_MODES = {"none", "same_y_different_x", "same_x_different_y"}
 STEP_AXIS_MODES = {"auto_data", "uniform_custom"}
@@ -51,6 +59,48 @@ def create_dirs():
         PLOT_DIR
     ]:
         path.mkdir(parents=True, exist_ok=True)
+
+
+def clear_directory_contents(directory):
+    directory = Path(directory)
+
+    if not directory.exists():
+        return
+
+    for item in directory.iterdir():
+        if item.is_dir():
+            shutil.rmtree(item, ignore_errors=True)
+        else:
+            item.unlink(missing_ok=True)
+
+
+def purge_user_data_files():
+    create_dirs()
+
+    clear_directory_contents(UPLOADED_DATA_DIR)
+    clear_directory_contents(PROCESSED_DATA_DIR)
+    clear_directory_contents(PLOT_DIR)
+
+    kept_datasets = []
+
+    if MANIFEST_PATH.exists():
+        try:
+            with open(MANIFEST_PATH, "r", encoding="utf-8") as file:
+                manifest = json.load(file)
+        except Exception:
+            manifest = {"datasets": []}
+
+        for item in manifest.get("datasets", []):
+            if not isinstance(item, dict):
+                continue
+
+            file_path = Path(item.get("file_path", ""))
+
+            if item.get("dataset_type") == "test_data" and file_path.exists():
+                kept_datasets.append(item)
+
+    with open(MANIFEST_PATH, "w", encoding="utf-8") as file:
+        json.dump({"datasets": kept_datasets}, file, indent=4)
 
 
 def read_manifest():
@@ -523,8 +573,9 @@ def register_dataset(file_path, dataset_type, source, uploaded_by="user", descri
         **data_info
     }
 
-    manifest["datasets"].append(dataset_info)
-    write_manifest(manifest)
+    if PERSIST_USER_DATASETS or dataset_type == "test_data":
+        manifest["datasets"].append(dataset_info)
+        write_manifest(manifest)
 
     return dataset_info
 
@@ -534,6 +585,9 @@ def register_test_data_if_needed():
     existing_paths = set()
 
     for item in manifest["datasets"]:
+        if not isinstance(item, dict):
+            continue
+
         file_path = Path(item.get("file_path", ""))
 
         if file_path.exists():
@@ -563,7 +617,8 @@ def get_datasets():
         file_path = Path(item.get("file_path", ""))
 
         if file_path.exists():
-            datasets.append(item)
+            if PERSIST_USER_DATASETS or item.get("dataset_type") == "test_data":
+                datasets.append(item)
 
     return datasets
 
@@ -1964,14 +2019,40 @@ def create_plot(
     if bottom_margin is not None:
         fig.subplots_adjust(bottom=bottom_margin)
 
-    output_name = f"plot_{uuid.uuid4().hex[:12]}.png"
-    output_path = PLOT_DIR / output_name
+    if SAVE_PLOTS_TO_DISK:
+        output_name = f"plot_{uuid.uuid4().hex[:12]}.png"
+        output_path = PLOT_DIR / output_name
+        fig.savefig(output_path)
+        plt.close(fig)
 
-    fig.savefig(output_path)
+        return url_for("static", filename=f"generated_plots/{output_name}")
+
+    buffer = io.BytesIO()
+    fig.savefig(buffer, format="png")
     plt.close(fig)
+    buffer.seek(0)
 
-    return url_for("static", filename=f"generated_plots/{output_name}")
+    encoded = base64.b64encode(buffer.read()).decode("utf-8")
 
+    return f"data:image/png;base64,{encoded}"
+
+
+
+@app.route("/api/privacy/clear-user-data", methods=["POST"])
+def clear_user_data_route():
+    try:
+        purge_user_data_files()
+        register_test_data_if_needed()
+
+        return jsonify({
+            "ok": True,
+            "message": "Uploaded data, processed data, generated plots, and non-test manifest entries were removed."
+        })
+    except Exception as exc:
+        return jsonify({
+            "ok": False,
+            "error": str(exc)
+        }), 500
 
 
 @app.route("/api/ai/workflow-plan", methods=["POST"])
@@ -2058,6 +2139,10 @@ def ai_workflow_execute():
                 "create_plot": create_plot
             }
         )
+
+        if PURGE_USER_DATA_AFTER_WORKFLOW:
+            purge_user_data_files()
+            register_test_data_if_needed()
 
         return jsonify({
             "ok": True,
@@ -2868,5 +2953,9 @@ def plot():
 
 if __name__ == "__main__":
     create_dirs()
+
+    if PURGE_NON_TEST_DATA_ON_STARTUP:
+        purge_user_data_files()
+
     register_test_data_if_needed()
     app.run(debug=True)
