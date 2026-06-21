@@ -61,9 +61,14 @@ def _float(value, default):
         return default
 
 
-def _safe_name(value, default):
+def _safe_name(value, default, max_length=80):
     value = _text(value) or default
     value = re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("_")
+    value = value or default
+
+    if len(value) > max_length:
+        value = value[:max_length].rstrip("_.")
+
     return value or default
 
 
@@ -323,8 +328,11 @@ def _params(step):
 
 
 def _output_path(processed_dir, output_name, suffix):
-    stem = _safe_name(output_name, suffix)
-    return Path(processed_dir) / f"{_timestamp()}_{stem}_{suffix}.csv"
+    processed_dir = Path(processed_dir)
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    stem = _safe_name(output_name, suffix, max_length=70)
+    suffix = _safe_name(suffix, "output", max_length=24)
+    return processed_dir / f"{_timestamp()}_{stem}_{suffix}.csv"
 
 
 def _index_uploaded_files(uploaded_files):
@@ -611,9 +619,11 @@ def execute_workflow_plan(plan, context):
             created_ids = []
 
             for raw_path in file_paths:
+                source_stem = _safe_name(raw_path.stem, "source", max_length=40)
+                output_stem = _safe_name(output_name, "cleaned", max_length=36)
                 output_path = _output_path(
                     processed_dir,
-                    f"{output_name}_{raw_path.stem}",
+                    f"{output_stem}_{source_stem}",
                     "cleaned"
                 )
                 save_cleaned_dataset(raw_path, output_path)
@@ -697,9 +707,11 @@ def execute_workflow_plan(plan, context):
                 current_col = _text(params.get("current_col")) or "Im_A"
                 time_col = _text(params.get("time_col"))
 
+                source_stem = _safe_name(Path(dataset["file_path"]).stem, "source", max_length=36)
+                output_stem = _safe_name(output_name, "converted", max_length=40)
                 output_path = _output_path(
                     processed_dir,
-                    f"{output_name}_{Path(dataset['file_path']).stem}",
+                    f"{output_stem}_{source_stem}",
                     "converted"
                 )
                 conversion_summary = _create_converted_dataset(
@@ -716,6 +728,10 @@ def execute_workflow_plan(plan, context):
                     electrode_area_cm2=electrode_area_cm2,
                     time_col=time_col
                 )
+
+                if not output_path.exists():
+                    raise ValueError(f"Converted output file was not created: {output_path}")
+
                 registered = state["register_dataset"](
                     file_path=output_path,
                     dataset_type="converted_data",
