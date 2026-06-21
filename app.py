@@ -17,7 +17,7 @@ from data_loader import read_dataset, inspect_dataset, save_cleaned_dataset
 from data_combiner import combine_file_paths
 from sequential_tools import combine_sequential_file_paths
 from conversion_tools import convert_dataset_variables
-
+from ai_plot_assistant import parse_plot_request
 
 app = Flask(__name__)
 app.secret_key = "dev"
@@ -1484,6 +1484,37 @@ def create_plot(
 
     return url_for("static", filename=f"generated_plots/{output_name}")
 
+
+@app.route("/api/ai/plot-config", methods=["POST"])
+def ai_plot_config():
+    payload = request.get_json() or {}
+
+    user_request = payload.get("message", "").strip()
+    column_names = payload.get("columns", [])
+
+    if not user_request:
+        return jsonify({
+            "ok": False,
+            "error": "Missing plot request."
+        }), 400
+
+    if not column_names:
+        return jsonify({
+            "ok": False,
+            "error": "No column names provided."
+        }), 400
+
+    try:
+        config = parse_plot_request(user_request, column_names)
+        return jsonify({
+            "ok": True,
+            "config": config
+        })
+    except Exception as exc:
+        return jsonify({
+            "ok": False,
+            "error": str(exc)
+        }), 500
 
 @app.route("/", methods=["GET"])
 def index():

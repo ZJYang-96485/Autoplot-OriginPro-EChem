@@ -224,6 +224,44 @@
             padding-bottom: 8px;
         }
 
+
+        .ai-assistant-box {
+            border: 1px solid #d8dee8;
+            border-radius: 10px;
+            background: #fbfcfe;
+            padding: 18px;
+            margin-top: 12px;
+        }
+
+        .ai-actions {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .ai-status {
+            margin-top: 12px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            background: #f0f4f8;
+            color: #3b4754;
+            font-size: 14px;
+            line-height: 1.45;
+            white-space: pre-wrap;
+        }
+
+        .ai-result {
+            margin-top: 12px;
+            padding: 12px;
+            border-radius: 8px;
+            background: #13294B;
+            color: #ffffff;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            font-size: 13px;
+        }
+
         @media (max-width: 820px) {
             .grid,
             .form-grid,
@@ -475,6 +513,28 @@
                     <li><strong>Custom label positions:</strong> use main X units, such as minutes.</li>
                 </ul>
             </div>
+        </section>
+
+
+        <section class="card full-width">
+            <h2>AI Plot Assistant</h2>
+
+            <div class="ai-assistant-box">
+                <label for="ai_plot_prompt">Describe the plot you want</label>
+                <textarea id="ai_plot_prompt" placeholder="Example: Plot current density vs potential using line scatter, x from 0.2 to 1.0 V, export PNG."></textarea>
+
+                <div class="ai-actions">
+                    <button type="button" id="ai_parse_button" onclick="parseAIPlotSettings()">Parse Plot Settings</button>
+                </div>
+
+                <div id="ai_plot_status" class="ai-status">
+                    Select a dataset first, then describe the plot. The assistant will fill the plotting form for review.
+                </div>
+
+                <pre id="ai_plot_result" class="ai-result hidden"></pre>
+            </div>
+
+            <p class="hint">The AI assistant only fills plot settings. Review the values before generating the plot.</p>
         </section>
 
         <section class="card full-width">
@@ -1329,6 +1389,155 @@
             `;
         });
     }
+
+
+    function getAvailableColumnsForAI() {
+        return Array.from(xSelect.options)
+            .map(option => option.value)
+            .filter(value => value && value !== "none");
+    }
+
+    function setInputValueForAI(id, value) {
+        const element = document.getElementById(id);
+
+        if (!element || value === null || value === undefined) {
+            return;
+        }
+
+        element.value = value;
+        element.dispatchEvent(new Event("input", {bubbles: true}));
+        element.dispatchEvent(new Event("change", {bubbles: true}));
+    }
+
+    function setSelectValueForAI(id, value) {
+        const element = document.getElementById(id);
+
+        if (!element || value === null || value === undefined) {
+            return false;
+        }
+
+        const optionValues = Array.from(element.options).map(option => option.value);
+
+        if (optionValues.includes(value)) {
+            element.value = value;
+            element.dispatchEvent(new Event("change", {bubbles: true}));
+            return true;
+        }
+
+        return false;
+    }
+
+    function applyAIPlotType(plotType) {
+        const showMarkersCheck = document.getElementById("show_markers");
+
+        if (setSelectValueForAI("plot_type", plotType)) {
+            if (plotType === "line_scatter" && showMarkersCheck) {
+                showMarkersCheck.checked = true;
+            }
+
+            return;
+        }
+
+        if (plotType === "line_scatter") {
+            if (!setSelectValueForAI("plot_type", "line")) {
+                setSelectValueForAI("plot_type", "scatter");
+            }
+
+            if (showMarkersCheck) {
+                showMarkersCheck.checked = true;
+            }
+
+            return;
+        }
+
+        if (plotType === "scatter") {
+            setSelectValueForAI("plot_type", "scatter");
+            return;
+        }
+
+        if (plotType === "bar") {
+            setSelectValueForAI("plot_type", "bar");
+            return;
+        }
+
+        setSelectValueForAI("plot_type", "line");
+    }
+
+    function fillPlotFormFromAI(config) {
+        setInputValueForAI("plot_title", config.plot_title);
+        setSelectValueForAI("x_col", config.x_column);
+        setSelectValueForAI("y_col", config.y_column);
+        setInputValueForAI("x_label", config.x_label);
+        setInputValueForAI("y_label", config.y_label);
+        setInputValueForAI("x_min", config.x_min);
+        setInputValueForAI("x_max", config.x_max);
+        setInputValueForAI("y_min", config.y_min);
+        setInputValueForAI("y_max", config.y_max);
+        applyAIPlotType(config.plot_type);
+    }
+
+    async function parseAIPlotSettings() {
+        const promptInput = document.getElementById("ai_plot_prompt");
+        const statusBox = document.getElementById("ai_plot_status");
+        const resultBox = document.getElementById("ai_plot_result");
+        const button = document.getElementById("ai_parse_button");
+
+        const message = promptInput.value.trim();
+        const datasetId = datasetSelect.value;
+        const columns = getAvailableColumnsForAI();
+
+        resultBox.classList.add("hidden");
+        resultBox.textContent = "";
+
+        if (!datasetId) {
+            statusBox.textContent = "Please select a dataset before using the AI assistant.";
+            return;
+        }
+
+        if (!message) {
+            statusBox.textContent = "Please describe the plot you want.";
+            return;
+        }
+
+        if (columns.length === 0) {
+            statusBox.textContent = "No columns are loaded yet. Select a dataset and wait for the column lists to appear.";
+            return;
+        }
+
+        statusBox.textContent = "Parsing plot settings...";
+        button.disabled = true;
+
+        try {
+            const response = await fetch("/api/ai/plot-config", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    message: message,
+                    columns: columns
+                })
+            });
+
+            const data = await response.json();
+
+            resultBox.textContent = JSON.stringify(data, null, 2);
+            resultBox.classList.remove("hidden");
+
+            if (!response.ok || !data.ok) {
+                statusBox.textContent = data.error || "AI parsing failed.";
+                return;
+            }
+
+            fillPlotFormFromAI(data.config);
+            statusBox.textContent = "Plot settings filled. Review the form before generating the plot.";
+        } catch (error) {
+            statusBox.textContent = `AI request failed: ${error.message}`;
+        } finally {
+            button.disabled = false;
+        }
+    }
+
 
     datasetSelect.addEventListener("change", () => {
         formState.x_col = null;

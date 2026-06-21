@@ -2,3 +2,5 @@ pandas
 originpro
 flask
 matplotlib
+openai
+python-dotenv

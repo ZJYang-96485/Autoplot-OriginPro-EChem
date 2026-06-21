@@ -49,7 +49,15 @@ mol L⁻¹
 
 s⁻¹
 
+3. AI Assistant Setup (Optional, Charge to OpenAI with a very small amount)
 
+The AI Plot Assistant uses the OpenAI API. Each user must **provide their own OpenAI API key**.
 
-3. Questions or Suggestions can be forwarded to joeyang2 AT illinois.edu
+Create a local `.env` file in the project root:
+
+```env
+OPENAI_API_KEY=your_api_key_here
+AI_MODEL=gpt-5.4-mini
+
+4. Questions or Suggestions can be forwarded to joeyang2 AT illinois.edu
 
