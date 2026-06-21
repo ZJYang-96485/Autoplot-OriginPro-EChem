@@ -559,7 +559,7 @@ def plot_single_curve(
             edgecolor=line_color,
             alpha=opacity,
             s=marker_size,
-            label=label if label else "Primary"
+            label=label if label else "_nolegend_"
         )
 
     elif plot_type == "line":
@@ -577,7 +577,7 @@ def plot_single_curve(
             linewidth=line_width,
             markersize=max(1, marker_size ** 0.5),
             alpha=opacity,
-            label=label if label else "Primary"
+            label=label if label else "_nolegend_"
         )
 
     elif plot_type == "bar":
@@ -589,7 +589,7 @@ def plot_single_curve(
             color=marker_color,
             edgecolor=line_color,
             alpha=opacity,
-            label=label if label else "Primary"
+            label=label if label else "_nolegend_"
         )
 
     elif plot_type == "box":
@@ -616,7 +616,7 @@ def plot_single_curve(
             color=marker_color,
             edgecolor=line_color,
             alpha=opacity,
-            label=label if label else "Primary"
+            label=label if label else "_nolegend_"
         )
 
     elif plot_type == "histogram":
@@ -627,7 +627,7 @@ def plot_single_curve(
             facecolor=marker_color,
             edgecolor=line_color,
             alpha=opacity,
-            label=label if label else "Primary"
+            label=label if label else "_nolegend_"
         )
 
     else:
@@ -754,7 +754,7 @@ def plot_summary_curve(
             edgecolor=line_color,
             s=marker_size,
             alpha=opacity,
-            label=label if label else "Summary points"
+            label=label if label else "_nolegend_"
         )
         return
 
@@ -770,7 +770,7 @@ def plot_summary_curve(
             linewidth=line_width,
             markersize=max(1, marker_size ** 0.5),
             alpha=opacity,
-            label=label if label else "Summary"
+            label=label if label else "_nolegend_"
         )
         return
 
@@ -782,7 +782,7 @@ def plot_summary_curve(
             edgecolor=line_color,
             s=marker_size,
             alpha=max(0.3, opacity),
-            label=label if label else "Summary points"
+            label=label if label else "_nolegend_"
         )
 
         smoothed = smooth_summary_data(data, x_col, y_col, smooth_window)
@@ -793,7 +793,7 @@ def plot_summary_curve(
             color=line_color,
             linewidth=line_width,
             alpha=opacity,
-            label="Smooth guide"
+            label="Smooth guide" if label else "_nolegend_"
         )
         return
 
@@ -826,7 +826,7 @@ def plot_secondary_line_or_scatter(
             edgecolor=line_color,
             alpha=opacity,
             s=marker_size,
-            label=label if label else "Secondary"
+            label=label if label else "_nolegend_"
         )
 
     else:
@@ -842,7 +842,7 @@ def plot_secondary_line_or_scatter(
             linewidth=line_width,
             markersize=max(1, marker_size ** 0.5),
             alpha=opacity,
-            label=label if label else "Secondary"
+            label=label if label else "_nolegend_"
         )
 
 
@@ -920,7 +920,7 @@ def setup_step_axis(
 ):
     top_axis = ax.twiny()
     top_axis.patch.set_alpha(0)
-    top_axis.set_xlabel(x_label if x_label else x_col)
+    top_axis.set_xlabel(x_label if x_label else format_column_label(x_col))
     top_axis.xaxis.tick_top()
     top_axis.xaxis.set_label_position("top")
     top_axis.spines["bottom"].set_visible(False)
@@ -988,9 +988,132 @@ def setup_step_axis(
 
     ax.set_xticks(ticks)
     ax.set_xticklabels(labels, rotation=label_rotation, ha=label_alignment)
-    ax.set_xlabel(step_axis_label if step_axis_label else step_value_col, labelpad=label_pad)
+    ax.set_xlabel(step_axis_label if step_axis_label else format_column_label(step_value_col), labelpad=label_pad)
 
     return top_axis
+
+def normalize_matplotlib_text(value):
+    if value is None:
+        return ""
+
+    text = str(value).strip()
+
+    if text.lower() in {"none", "null", "n/a", "na"}:
+        return ""
+
+    symbol_replacements = {
+        "j /": r"$j$ /",
+        "i /": r"$i$ /",
+        "I /": r"$I$ /",
+        "E /": r"$E$ /",
+        "V /": r"$V$ /",
+        "t /": r"$t$ /",
+        "T /": r"$T$ /",
+        "C /": r"$C$ /",
+        "R /": r"$R$ /",
+        "Z /": r"$Z$ /",
+        "eta /": r"$\eta$ /",
+        "η /": r"$\eta$ /",
+        "alpha /": r"$\alpha$ /",
+        "α /": r"$\alpha$ /",
+        "beta /": r"$\beta$ /",
+        "β /": r"$\beta$ /",
+        "lambda /": r"$\lambda$ /",
+        "λ /": r"$\lambda$ /",
+        "theta /": r"$\theta$ /",
+        "θ /": r"$\theta$ /"
+    }
+
+    for old, new in symbol_replacements.items():
+        text = text.replace(old, new)
+
+    unit_replacements = [
+        ("mA cm^-2", r"mA cm$^{-2}$"),
+        ("A cm^-2", r"A cm$^{-2}$"),
+        ("uA cm^-2", r"$\mu$A cm$^{-2}$"),
+        ("µA cm^-2", r"$\mu$A cm$^{-2}$"),
+        ("μA cm^-2", r"$\mu$A cm$^{-2}$"),
+        ("mA/cm^2", r"mA cm$^{-2}$"),
+        ("A/cm^2", r"A cm$^{-2}$"),
+        ("uA/cm^2", r"$\mu$A cm$^{-2}$"),
+        ("µA/cm^2", r"$\mu$A cm$^{-2}$"),
+        ("μA/cm^2", r"$\mu$A cm$^{-2}$"),
+        ("mA cm-2", r"mA cm$^{-2}$"),
+        ("A cm-2", r"A cm$^{-2}$"),
+        ("mol cm^-2", r"mol cm$^{-2}$"),
+        ("mol/cm^2", r"mol cm$^{-2}$"),
+        ("F cm^-2", r"F cm$^{-2}$"),
+        ("F/cm^2", r"F cm$^{-2}$"),
+        ("S cm^-1", r"S cm$^{-1}$"),
+        ("S/cm", r"S cm$^{-1}$"),
+        ("ohm cm", r"$\Omega$ cm"),
+        ("Ohm cm", r"$\Omega$ cm"),
+        ("Ω cm", r"$\Omega$ cm"),
+        ("ohm", r"$\Omega$"),
+        ("Ohm", r"$\Omega$"),
+        ("degC", r"$^\circ$C"),
+        ("°C", r"$^\circ$C"),
+        ("cm^-1", r"cm$^{-1}$"),
+        ("cm^-2", r"cm$^{-2}$"),
+        ("cm^-3", r"cm$^{-3}$"),
+        ("m^-1", r"m$^{-1}$"),
+        ("m^-2", r"m$^{-2}$"),
+        ("m^-3", r"m$^{-3}$"),
+        ("s^-1", r"s$^{-1}$"),
+        ("min^-1", r"min$^{-1}$"),
+        ("h^-1", r"h$^{-1}$"),
+        ("g^-1", r"g$^{-1}$"),
+        ("kg^-1", r"kg$^{-1}$"),
+        ("mAh g^-1", r"mAh g$^{-1}$"),
+        ("mAh/g", r"mAh g$^{-1}$"),
+        ("Wh kg^-1", r"Wh kg$^{-1}$"),
+        ("Wh/kg", r"Wh kg$^{-1}$"),
+        ("mV dec^-1", r"mV dec$^{-1}$"),
+        ("mV/dec", r"mV dec$^{-1}$")
+    ]
+
+    for old, new in unit_replacements:
+        text = text.replace(old, new)
+
+    text = re.sub(r"\^(-?\d+)", r"$^{\1}$", text)
+    text = re.sub(r"(?<!\$)\bcm-([123])\b", r"cm$^{-\1}$", text)
+    text = re.sub(r"(?<!\$)\bm-([123])\b", r"m$^{-\1}$", text)
+    text = text.replace("micro", r"$\mu$")
+
+    return text
+
+
+def format_column_label(column_name):
+    if column_name in [None, "", "none"]:
+        return ""
+
+    text = str(column_name).strip()
+
+    known_labels = {
+        "global_time_min": r"$t$ / min",
+        "global_time_s": r"$t$ / s",
+        "T_s": r"$t$ / s",
+        "Potential_V": r"$E$ / V",
+        "E_RHE": r"$E$ / V vs. RHE",
+        "Vf_V_vs_Ref": r"$E$ / V vs. Ref",
+        "Current_mA": r"$I$ / mA",
+        "Im_A": r"$I$ / A",
+        "j_mA_cm2": r"$j$ / mA cm$^{-2}$",
+        "j_A_cm2": r"$j$ / A cm$^{-2}$",
+        "Z_ohm": r"$Z$ / $\Omega$",
+        "phase_deg": r"Phase / degree",
+        "frequency_Hz": r"Frequency / Hz"
+    }
+
+    if text in known_labels:
+        return known_labels[text]
+
+    text = text.replace("_per_", "/")
+    text = text.replace("_", " ")
+    text = text.replace(" cm2", " cm^-2")
+    text = text.replace(" cm3", " cm^-3")
+
+    return normalize_matplotlib_text(text)
 
 
 def create_plot(
@@ -1084,6 +1207,17 @@ def create_plot(
 
     data_path = Path(dataset["file_path"])
     df = read_dataset(data_path)
+
+    x_label = normalize_matplotlib_text(x_label)
+    y_label = normalize_matplotlib_text(y_label)
+    plot_title = normalize_matplotlib_text(plot_title)
+    bottom_annotation = normalize_matplotlib_text(bottom_annotation)
+    primary_label = normalize_matplotlib_text(primary_label)
+    group_label = normalize_matplotlib_text(group_label)
+    step_axis_label = normalize_matplotlib_text(step_axis_label)
+    top_x_label = normalize_matplotlib_text(top_x_label)
+    right_y_label = normalize_matplotlib_text(right_y_label)
+    second_label = normalize_matplotlib_text(second_label)
 
     group_col = None if group_col in [None, "", "none"] else group_col
     summary_group_col = None if summary_group_col in [None, "", "none"] else summary_group_col
@@ -1270,12 +1404,12 @@ def create_plot(
             opacity=opacity
         )
 
-    final_x_label = x_label if x_label else x_col
+    final_x_label = x_label if x_label else format_column_label(x_col)
 
     if plot_type in ["count", "histogram"]:
         final_y_label = y_label if y_label else "Count"
     else:
-        final_y_label = y_label if y_label else y_col
+        final_y_label = y_label if y_label else format_column_label(y_col)
 
     ax.set_xlabel(final_x_label)
     ax.set_ylabel(final_y_label)
@@ -1306,7 +1440,7 @@ def create_plot(
             opacity=opacity
         )
 
-        secondary_axis.set_xlabel(top_x_label if top_x_label else x2_col)
+        secondary_axis.set_xlabel(top_x_label if top_x_label else format_column_label(x2_col))
 
     elif secondary_mode == "same_x_different_y":
         secondary_axis = ax.twinx()
@@ -1332,7 +1466,7 @@ def create_plot(
             opacity=opacity
         )
 
-        secondary_axis.set_ylabel(right_y_label if right_y_label else y2_col)
+        secondary_axis.set_ylabel(right_y_label if right_y_label else format_column_label(y2_col))
 
     if plot_title:
         ax.set_title(plot_title)
@@ -1415,7 +1549,7 @@ def create_plot(
 
     if use_step_axis and step_top_axis is not None:
         apply_axis_tick_control(
-        axis=step_top_axis,
+            axis=step_top_axis,
             axis_name="x",
             tick_mode=x_tick_mode,
             major_interval=x_major_interval,
@@ -1454,7 +1588,7 @@ def create_plot(
         labels += labels_secondary
 
     if show_legend and handles and any(labels):
-        legend_title = group_label if group_col and group_label else group_col
+        legend_title = group_label if group_col and group_label else None
         legend = ax.legend(handles, labels, loc="best", title=legend_title, fontsize=legend_font_size)
 
         if legend is not None and legend.get_title() is not None:
@@ -1978,6 +2112,17 @@ def plot():
     second_marker_color = request.form.get("second_marker_color", "#9A4DFF")
     second_line_color = request.form.get("second_line_color", "#9A4DFF")
     second_label = request.form.get("second_label", "").strip()
+
+    x_label = normalize_matplotlib_text(x_label)
+    y_label = normalize_matplotlib_text(y_label)
+    plot_title = normalize_matplotlib_text(plot_title)
+    bottom_annotation = normalize_matplotlib_text(bottom_annotation)
+    primary_label = normalize_matplotlib_text(primary_label)
+    group_label = normalize_matplotlib_text(group_label)
+    step_axis_label = normalize_matplotlib_text(step_axis_label)
+    top_x_label = normalize_matplotlib_text(top_x_label)
+    right_y_label = normalize_matplotlib_text(right_y_label)
+    second_label = normalize_matplotlib_text(second_label)
 
     if group_col not in [None, "", "none"]:
         secondary_mode = "none"

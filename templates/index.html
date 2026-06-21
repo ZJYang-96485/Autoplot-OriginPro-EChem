@@ -1348,16 +1348,18 @@
             });
     }
 
-    function updatePlotTypeOptions() {
+    function updatePlotTypeOptions(selectedPlotType = null) {
         const datasetId = datasetSelect.value;
         const xCol = xSelect.value;
         const yCol = ySelect.value;
 
         if (!datasetId || !xCol) {
-            return;
+            return Promise.resolve();
         }
 
-        fetch("/suggest_plot_types", {
+        const currentPlotType = selectedPlotType || plotTypeSelect.value || formState.plot_type;
+
+        return fetch("/suggest_plot_types", {
             method: "POST",
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({
@@ -1371,8 +1373,12 @@
             clearSelect(plotTypeSelect);
 
             data.plot_types.forEach(plotType => {
-                addOption(plotTypeSelect, plotType, plotType, formState.plot_type);
+                addOption(plotTypeSelect, plotType, plotType, currentPlotType);
             });
+
+            if (currentPlotType && Array.from(plotTypeSelect.options).some(option => option.value === currentPlotType)) {
+                plotTypeSelect.value = currentPlotType;
+            }
 
             plotHint.innerHTML = `
                 <strong>X type:</strong> ${data.x_type}<br>
@@ -1397,29 +1403,130 @@
             .filter(value => value && value !== "none");
     }
 
+    function cleanValueForAI(value) {
+        if (value === null || value === undefined) {
+            return null;
+        }
+
+        const cleanValue = String(value).trim();
+        const emptyLikeValues = ["none", "null", "n/a", "na", "undefined"];
+
+        if (emptyLikeValues.includes(cleanValue.toLowerCase())) {
+            return "";
+        }
+
+        return cleanValue;
+    }
+
+    function normalizeColorForAI(value) {
+        const cleanValue = cleanValueForAI(value);
+
+        if (cleanValue === null || cleanValue === "") {
+            return null;
+        }
+
+        if (/^#[0-9A-Fa-f]{6}$/.test(cleanValue)) {
+            return cleanValue;
+        }
+
+        const namedColors = {
+            red: "#FF0000",
+            blue: "#0000FF",
+            green: "#008000",
+            black: "#000000",
+            white: "#FFFFFF",
+            orange: "#FF5F05",
+            navy: "#13294B",
+            purple: "#9A4DFF",
+            gray: "#808080",
+            grey: "#808080",
+            "uiuc orange": "#FF5F05",
+            "illinois orange": "#FF5F05",
+            "uiuc blue": "#13294B",
+            "illinois blue": "#13294B",
+            "navy blue": "#13294B",
+            "dark blue": "#13294B",
+            "light gray": "#D3D3D3",
+            "light grey": "#D3D3D3",
+            "dark gray": "#404040",
+            "dark grey": "#404040"
+        };
+
+        return namedColors[cleanValue.toLowerCase()] || null;
+    }
+
     function setInputValueForAI(id, value) {
         const element = document.getElementById(id);
+        const cleanValue = cleanValueForAI(value);
 
-        if (!element || value === null || value === undefined) {
+        if (!element || cleanValue === null) {
             return;
         }
 
-        element.value = value;
+        element.value = cleanValue;
         element.dispatchEvent(new Event("input", {bubbles: true}));
+        element.dispatchEvent(new Event("change", {bubbles: true}));
+    }
+
+    function setColorValueForAI(id, value) {
+        const color = normalizeColorForAI(value);
+
+        if (color) {
+            setInputValueForAI(id, color);
+        }
+    }
+
+    function booleanValueForAI(value) {
+        if (value === null || value === undefined) {
+            return null;
+        }
+
+        if (typeof value === "boolean") {
+            return value;
+        }
+
+        if (typeof value === "number") {
+            return value !== 0;
+        }
+
+        const cleanValue = String(value).trim().toLowerCase();
+
+        if (["true", "yes", "on", "1", "checked"].includes(cleanValue)) {
+            return true;
+        }
+
+        if (["false", "no", "off", "0", "", "none", "null", "n/a", "na"].includes(cleanValue)) {
+            return false;
+        }
+
+        return Boolean(value);
+    }
+
+    function setCheckboxValueForAI(id, value) {
+        const element = document.getElementById(id);
+        const cleanValue = booleanValueForAI(value);
+
+        if (!element || cleanValue === null) {
+            return;
+        }
+
+        element.checked = cleanValue;
         element.dispatchEvent(new Event("change", {bubbles: true}));
     }
 
     function setSelectValueForAI(id, value) {
         const element = document.getElementById(id);
+        const cleanValue = cleanValueForAI(value);
 
-        if (!element || value === null || value === undefined) {
+        if (!element || cleanValue === null) {
             return false;
         }
 
         const optionValues = Array.from(element.options).map(option => option.value);
+        const selectValue = cleanValue === "" && optionValues.includes("none") ? "none" : cleanValue;
 
-        if (optionValues.includes(value)) {
-            element.value = value;
+        if (optionValues.includes(selectValue)) {
+            element.value = selectValue;
             element.dispatchEvent(new Event("change", {bubbles: true}));
             return true;
         }
@@ -1428,42 +1535,124 @@
     }
 
     function applyAIPlotType(plotType) {
-        const showMarkersCheck = document.getElementById("show_markers");
+        let requestedPlotType = cleanValueForAI(plotType) || "line";
 
-        if (setSelectValueForAI("plot_type", plotType)) {
-            if (plotType === "line_scatter" && showMarkersCheck) {
-                showMarkersCheck.checked = true;
-            }
+        if (requestedPlotType === "line_scatter") {
+            requestedPlotType = "line";
+            setCheckboxValueForAI("show_markers", true);
+        }
 
+        if (setSelectValueForAI("plot_type", requestedPlotType)) {
             return;
         }
 
-        if (plotType === "line_scatter") {
-            if (!setSelectValueForAI("plot_type", "line")) {
-                setSelectValueForAI("plot_type", "scatter");
-            }
-
-            if (showMarkersCheck) {
-                showMarkersCheck.checked = true;
-            }
-
-            return;
-        }
-
-        if (plotType === "scatter") {
+        if (requestedPlotType === "scatter") {
             setSelectValueForAI("plot_type", "scatter");
             return;
         }
 
-        if (plotType === "bar") {
+        if (requestedPlotType === "bar") {
             setSelectValueForAI("plot_type", "bar");
+            return;
+        }
+
+        if (requestedPlotType === "histogram") {
+            setSelectValueForAI("plot_type", "histogram");
             return;
         }
 
         setSelectValueForAI("plot_type", "line");
     }
 
-    function fillPlotFormFromAI(config) {
+    function applyAdvancedAIFields(config) {
+        setColorValueForAI("marker_color", config.marker_color);
+        setColorValueForAI("line_color", config.line_color);
+        setInputValueForAI("primary_label", config.primary_label);
+
+        setSelectValueForAI("group_col", config.group_column);
+        setInputValueForAI("group_label", config.group_label);
+        setSelectValueForAI("group_color_mode", config.group_color_mode);
+
+        setSelectValueForAI("data_reduction", config.data_reduction);
+        setSelectValueForAI("summary_group_col", config.summary_group_column);
+        setSelectValueForAI("x_summary_method", config.x_summary_method);
+        setSelectValueForAI("y_summary_method", config.y_summary_method);
+        setInputValueForAI("tail_fraction", config.tail_fraction);
+        setSelectValueForAI("fit_guide", config.fit_guide);
+        setInputValueForAI("smooth_window", config.smooth_window);
+
+        setCheckboxValueForAI("use_step_axis", config.use_step_axis);
+        setSelectValueForAI("step_axis_mode", config.step_axis_mode);
+        setSelectValueForAI("step_axis_placement", config.step_axis_placement);
+        setSelectValueForAI("step_axis_value_col", config.step_axis_value_column);
+        setSelectValueForAI("step_axis_group_col", config.step_axis_group_column);
+        setInputValueForAI("step_axis_label", config.step_axis_label);
+        setInputValueForAI("step_axis_max_ticks", config.step_axis_max_ticks);
+        setInputValueForAI("step_axis_decimal_places", config.step_axis_decimal_places);
+        setInputValueForAI("step_axis_label_stride", config.step_axis_label_stride);
+        setInputValueForAI("step_axis_custom_labels", config.step_axis_custom_labels);
+        setInputValueForAI("step_axis_custom_positions", config.step_axis_custom_positions);
+        setInputValueForAI("step_axis_label_rotation", config.step_axis_label_rotation);
+        setInputValueForAI("step_axis_label_pad", config.step_axis_label_pad);
+        setInputValueForAI("bottom_margin", config.bottom_margin);
+
+        setInputValueForAI("figure_width", config.figure_width);
+        setInputValueForAI("figure_height", config.figure_height);
+        setInputValueForAI("figure_dpi", config.figure_dpi);
+
+        setSelectValueForAI("x_tick_mode", config.x_tick_mode);
+        setInputValueForAI("x_major_interval", config.x_major_interval);
+        setInputValueForAI("x_minor_interval", config.x_minor_interval);
+        setInputValueForAI("x_custom_ticks", config.x_custom_ticks);
+        setInputValueForAI("x_custom_tick_labels", config.x_custom_tick_labels);
+
+        setSelectValueForAI("y_tick_mode", config.y_tick_mode);
+        setInputValueForAI("y_major_interval", config.y_major_interval);
+        setInputValueForAI("y_minor_interval", config.y_minor_interval);
+        setInputValueForAI("y_custom_ticks", config.y_custom_ticks);
+        setInputValueForAI("y_custom_tick_labels", config.y_custom_tick_labels);
+
+        setSelectValueForAI("line_order", config.line_order);
+        setInputValueForAI("opacity", config.opacity);
+        setInputValueForAI("line_width", config.line_width);
+        setInputValueForAI("marker_size", config.marker_size);
+        setCheckboxValueForAI("show_markers", config.show_markers);
+        setCheckboxValueForAI("show_legend", config.show_legend);
+
+        setInputValueForAI("axis_label_size", config.axis_label_size);
+        setInputValueForAI("tick_label_size", config.tick_label_size);
+        setSelectValueForAI("axis_label_weight", config.axis_label_weight);
+        setInputValueForAI("title_size", config.title_size);
+        setInputValueForAI("legend_font_size", config.legend_font_size);
+        setInputValueForAI("spine_width", config.spine_width);
+        setInputValueForAI("tick_width", config.tick_width);
+        setInputValueForAI("tick_length", config.tick_length);
+        setSelectValueForAI("tick_direction", config.tick_direction);
+
+        setCheckboxValueForAI("show_full_frame", config.show_full_frame);
+        setCheckboxValueForAI("show_top_ticks", config.show_top_ticks);
+        setCheckboxValueForAI("show_bottom_ticks", config.show_bottom_ticks);
+        setCheckboxValueForAI("show_left_ticks", config.show_left_ticks);
+        setCheckboxValueForAI("show_right_ticks", config.show_right_ticks);
+        setCheckboxValueForAI("show_grid", config.show_grid);
+
+        setSelectValueForAI("secondary_mode", config.secondary_mode);
+        setSelectValueForAI("x2_col", config.x2_column);
+        setSelectValueForAI("y2_col", config.y2_column);
+        setInputValueForAI("top_x_label", config.top_x_label);
+        setInputValueForAI("right_y_label", config.right_y_label);
+        setSelectValueForAI("secondary_plot_type", config.secondary_plot_type);
+        setInputValueForAI("second_label", config.second_label);
+        setColorValueForAI("second_marker_color", config.second_marker_color);
+        setColorValueForAI("second_line_color", config.second_line_color);
+        setInputValueForAI("bottom_annotation", config.bottom_annotation);
+
+        toggleSecondaryOptions();
+    }
+
+    async function fillPlotFormFromAI(config) {
+        const requestedPlotType = cleanValueForAI(config.plot_type) || "line";
+
         setInputValueForAI("plot_title", config.plot_title);
         setSelectValueForAI("x_col", config.x_column);
         setSelectValueForAI("y_col", config.y_column);
@@ -1473,7 +1662,15 @@
         setInputValueForAI("x_max", config.x_max);
         setInputValueForAI("y_min", config.y_min);
         setInputValueForAI("y_max", config.y_max);
-        applyAIPlotType(config.plot_type);
+
+        await updatePlotTypeOptions(requestedPlotType);
+
+        applyAIPlotType(requestedPlotType);
+        applyAdvancedAIFields(config);
+
+        setTimeout(() => {
+            applyAIPlotType(requestedPlotType);
+        }, 300);
     }
 
     async function parseAIPlotSettings() {
@@ -1529,7 +1726,7 @@
                 return;
             }
 
-            fillPlotFormFromAI(data.config);
+            await fillPlotFormFromAI(data.config);
             statusBox.textContent = "Plot settings filled. Review the form before generating the plot.";
         } catch (error) {
             statusBox.textContent = `AI request failed: ${error.message}`;

@@ -10,6 +10,31 @@ def origin_shutdown_exception_hook(exctype, value, traceback):
     sys.__excepthook__(exctype, value, traceback)
 
 
+def normalize_plot_text(value):
+    if value is None:
+        return ""
+
+    text = str(value).strip()
+
+    if text.lower() in {"none", "null", "n/a"}:
+        return ""
+
+    replacements = {
+        "cm^-2": "cm⁻²",
+        "cm^-3": "cm⁻³",
+        "mA cm^-2": "mA cm⁻²",
+        "A cm^-2": "A cm⁻²",
+        "mol cm^-2": "mol cm⁻²",
+        "s^-1": "s⁻¹",
+        "min^-1": "min⁻¹"
+    }
+
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    return text
+
+
 def make_test_data():
     potential = [-0.20, -0.15, -0.10, -0.05, 0.00, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
     current = [-0.02, -0.04, -0.08, -0.13, -0.20, -0.31, -0.45, -0.60, -0.78, -0.95, -1.10]
@@ -38,8 +63,8 @@ def create_origin_plot(df, output_dir):
     plot = layer.add_plot(wks, colx=0, coly=1, type="line")
     plot.color = "#FF5F05"
 
-    layer.axis("x").title = "Potential / V"
-    layer.axis("y").title = "Current / mA"
+    layer.axis("x").title = normalize_plot_text("Potential / V")
+    layer.axis("y").title = normalize_plot_text("Current / mA")
     layer.rescale()
 
     output_png = output_dir / "origin_test_plot.png"
