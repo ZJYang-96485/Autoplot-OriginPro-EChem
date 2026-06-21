@@ -7,9 +7,9 @@ __pycache__/
 venv/
 .env
 
-data_storage/metadata/dataset_manifest.json
-data_storage/temp/
-data_storage/cache/
+data_storage/**
+!data_storage/metadata/
+!data_storage/metadata/dataset_manifest.example.json
 
 static/generated_plots/
 results/
