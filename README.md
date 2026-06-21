@@ -58,7 +58,7 @@ Create a local `.env` file in the project root:
 ```env
 OPENAI_API_KEY=your_api_key_here
 AI_MODEL=gpt-5.4-mini
-
+```
 
 5. AI Plotting Details
 
