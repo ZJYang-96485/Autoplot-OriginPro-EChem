@@ -17,6 +17,7 @@ from data_loader import read_dataset, inspect_dataset, save_cleaned_dataset
 from data_combiner import combine_file_paths
 from sequential_tools import combine_sequential_file_paths
 from conversion_tools import convert_dataset_variables
+from replicate_tools import average_condition_replicates
 from ai_plot_assistant import parse_plot_request
 
 app = Flask(__name__)
@@ -1955,6 +1956,72 @@ def combine_existing_datasets():
     )
 
     flash("Selected datasets combined successfully.")
+    return redirect(url_for("index"))
+
+
+@app.route("/average_replicates", methods=["POST"])
+def average_replicates_dataset():
+    dataset_id = request.form.get("average_dataset_id")
+    dataset = get_dataset(dataset_id)
+
+    if dataset is None:
+        flash("Please select a valid combined dataset for replicate averaging.")
+        return redirect(url_for("index"))
+
+    averaged_name = request.form.get("averaged_name", "").strip()
+    x_col = request.form.get("average_x_col", "").strip()
+    y_col = request.form.get("average_y_col", "").strip()
+    condition_col = request.form.get("average_condition_col", "condition").strip() or "condition"
+    replicate_col = request.form.get("average_replicate_col", "dataset_label").strip() or "dataset_label"
+    method = request.form.get("average_method", "interpolate").strip() or "interpolate"
+    x_grid_method = request.form.get("average_x_grid_method", "overlap").strip() or "overlap"
+    grid_points = request.form.get("average_grid_points", "500").strip() or "500"
+    x_round_decimals = request.form.get("average_x_round_decimals", "6").strip() or "6"
+    min_replicates = request.form.get("average_min_replicates", "2").strip() or "2"
+
+    if not x_col or x_col == "none":
+        flash("Please select an X column for replicate averaging.")
+        return redirect(url_for("index"))
+
+    if not y_col or y_col == "none":
+        flash("Please select a Y column for replicate averaging.")
+        return redirect(url_for("index"))
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_stem = safe_output_name(averaged_name, f"averaged_replicates_{timestamp}")
+    output_path = PROCESSED_DATA_DIR / f"{timestamp}_{output_stem}_averaged.csv"
+
+    try:
+        result = average_condition_replicates(
+            input_path=Path(dataset["file_path"]),
+            output_path=output_path,
+            x_col=x_col,
+            y_col=y_col,
+            condition_col=condition_col,
+            replicate_col=replicate_col,
+            method=method,
+            x_grid_method=x_grid_method,
+            grid_points=grid_points,
+            x_round_decimals=x_round_decimals,
+            min_replicates=min_replicates
+        )
+    except Exception as error:
+        flash(f"Replicate averaging failed: {error}")
+        return redirect(url_for("index"))
+
+    description = averaged_name if averaged_name else f"Averaged replicate curves from {dataset.get('file_name', 'dataset')}."
+
+    register_dataset(
+        file_path=output_path,
+        dataset_type="averaged_replicates",
+        source=f"Averaged replicates from {dataset.get('file_name', 'dataset')}",
+        uploaded_by="user",
+        description=description
+    )
+
+    condition_count = len(result.get("conditions", []))
+    row_count = result.get("rows", 0)
+    flash(f"Replicate averaging completed: {condition_count} condition(s), {row_count} averaged rows. Plot y_mean grouped by {condition_col}.")
     return redirect(url_for("index"))
 
 

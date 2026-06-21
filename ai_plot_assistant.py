@@ -624,6 +624,73 @@ def _merge_profile_defaults(config):
 
     return merged
 
+def _looks_like_averaged_dataset(column_names):
+    columns = {column.lower(): column for column in column_names}
+    required = {"y_mean", "condition"}
+
+    return all(name in columns for name in required)
+
+
+def _find_column(column_names, candidates):
+    lookup = {column.lower(): column for column in column_names}
+
+    for candidate in candidates:
+        if candidate.lower() in lookup:
+            return lookup[candidate.lower()]
+
+    return None
+
+
+def _apply_averaged_replicate_defaults(config, column_names, user_request):
+    text = str(user_request).lower()
+    intent_terms = [
+        "average",
+        "averaged",
+        "mean curve",
+        "mean curves",
+        "replicate",
+        "replicates",
+        "condition",
+        "conditions",
+        "sem",
+        "std"
+    ]
+
+    if not any(term in text for term in intent_terms):
+        return config
+
+    if not _looks_like_averaged_dataset(column_names):
+        return config
+
+    y_mean_col = _find_column(column_names, ["y_mean"])
+    condition_col = _find_column(column_names, ["condition", "Condition", "group", "Group"])
+
+    if y_mean_col:
+        config["y_column"] = y_mean_col
+
+    if condition_col:
+        config["group_column"] = condition_col
+        config["group_label"] = config.get("group_label") or "Condition"
+        config["show_legend"] = True
+        config["group_color_mode"] = "auto"
+
+    config["plot_type"] = "line"
+    config["data_reduction"] = "raw"
+    config["summary_group_column"] = "none"
+    config["fit_guide"] = "connect"
+    config["show_markers"] = config.get("show_markers", True)
+    config["primary_label"] = ""
+    config["notes"] = "Using pre-averaged replicate data: y_mean is plotted and condition is used as the group column."
+
+    if not config.get("y_label"):
+        config["y_label"] = "Mean response"
+
+    if "y_sem" in [column.lower() for column in column_names]:
+        config["notes"] += " The dataset includes y_sem for future error-band plotting."
+
+    return config
+
+
 def _validate_config(config, column_names):
     config["x_column"] = _match_column(config.get("x_column"), column_names, allow_none=False)
     config["y_column"] = _match_column(config.get("y_column"), column_names, allow_none=True)
@@ -680,6 +747,11 @@ def parse_plot_request(user_request, column_names):
             "Use style_profile='thesis', 'presentation', or 'poster' when the figure is intended for those formats. "
             "Use style_profile='monochrome' for black-and-white printing, 'colorblind' for colorblind-safe plots, and 'dark' for dark-background slides. "
             "For electrochemistry, common axis labels include E / V vs. RHE, j / mA cm^-2, I / A, t / s, and t / min, but still follow the user's request. "
+            "Use Matplotlib mathtext for scientific labels when appropriate, such as '$j$ / mA cm$^{-2}$', '$E$ / V vs. RHE', and '$t$ / min. "
+            "Never return the literal string 'none', 'null', or 'n/a' for plot_title, primary_label, bottom_annotation, or notes; use an empty string instead. "
+            "If the available columns include y_mean, y_std, y_sem, n_replicates, and condition, treat this as a pre-averaged replicate dataset. "
+            "For pre-averaged replicate datasets, use y_mean as the Y column, condition as the group column, data_reduction='raw', plot_type='line', show_legend=true, and group_color_mode='auto'. "
+            "If the user asks to compare conditions after averaging replicates, do not use summary mode; the dataset is already averaged. "
             "Do not invent columns. Do not generate code. Do not execute plotting."
         ),
         input=(
@@ -700,6 +772,7 @@ def parse_plot_request(user_request, column_names):
     output_text = _extract_output_text(response)
     config = json.loads(output_text)
     config = _merge_profile_defaults(config)
+    config = _apply_averaged_replicate_defaults(config, column_names, user_request)
     config = _validate_config(config, column_names)
 
     return config

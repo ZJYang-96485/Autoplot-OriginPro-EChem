@@ -485,6 +485,95 @@
             </form>
         </section>
 
+
+        <section class="card full-width">
+            <h2>Average Replicates by Condition</h2>
+
+            <form action="{{ url_for('average_replicates') }}" method="post">
+                <div class="form-grid">
+                    <div class="form-grid-full">
+                        <label for="average_dataset_id">Dataset to average</label>
+                        <select id="average_dataset_id" name="average_dataset_id" required>
+                            <option value="">Choose a combined dataset</option>
+                            {% for dataset in datasets %}
+                                <option value="{{ dataset.dataset_id }}">
+                                    {{ dataset.file_name }} | {{ dataset.dataset_type }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="form-grid-full">
+                        <label for="averaged_name">Averaged dataset name</label>
+                        <input type="text" id="averaged_name" name="averaged_name" placeholder="Example: condition_average_curves">
+                    </div>
+
+                    <div>
+                        <label for="average_x_col">X column</label>
+                        <select id="average_x_col" name="average_x_col" required></select>
+                    </div>
+
+                    <div>
+                        <label for="average_y_col">Y column</label>
+                        <select id="average_y_col" name="average_y_col" required></select>
+                    </div>
+
+                    <div>
+                        <label for="average_condition_col">Condition column</label>
+                        <select id="average_condition_col" name="average_condition_col" required></select>
+                    </div>
+
+                    <div>
+                        <label for="average_replicate_col">Replicate column</label>
+                        <select id="average_replicate_col" name="average_replicate_col"></select>
+                        <p class="hint">Usually dataset_label, source_file, source_index, or replicate.</p>
+                    </div>
+
+                    <div>
+                        <label for="average_method">Averaging method</label>
+                        <select id="average_method" name="average_method">
+                            <option value="interpolate" selected>Interpolate to a common X grid</option>
+                            <option value="exact">Exact matching X values</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label for="average_x_grid_method">X grid method</label>
+                        <select id="average_x_grid_method" name="average_x_grid_method">
+                            <option value="overlap" selected>Overlap range shared by all replicates</option>
+                            <option value="union">Union range across replicates</option>
+                            <option value="reference">Reference replicate grid</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label for="average_grid_points">Grid points</label>
+                        <input type="number" id="average_grid_points" name="average_grid_points" min="2" max="10000" step="1" value="500">
+                    </div>
+
+                    <div>
+                        <label for="average_x_round_decimals">X rounding decimals for exact mode</label>
+                        <input type="number" id="average_x_round_decimals" name="average_x_round_decimals" min="0" max="12" step="1" value="6">
+                    </div>
+
+                    <div>
+                        <label for="average_min_replicates">Minimum replicates per averaged point</label>
+                        <input type="number" id="average_min_replicates" name="average_min_replicates" min="1" max="100" step="1" value="2">
+                    </div>
+
+                    <div class="form-grid-full">
+                        <div id="average_hint" class="dataset-info">
+                            Choose a combined dataset. The output dataset will contain y_mean, y_std, y_sem, n_replicates, and condition.
+                        </div>
+                    </div>
+                </div>
+
+                <button type="submit">Create Averaged Dataset</button>
+            </form>
+
+            <p class="hint">Recommended workflow: combine replicates first, assign condition and dataset_label, then average by condition.</p>
+        </section>
+
         <section class="card">
             <h2>Dataset Information</h2>
 
@@ -1142,6 +1231,18 @@
     const plotHint = document.getElementById("plot_hint");
     const datasetInfo = document.getElementById("dataset_info");
 
+
+    const averageDatasetSelect = document.getElementById("average_dataset_id");
+    const averageXSelect = document.getElementById("average_x_col");
+    const averageYSelect = document.getElementById("average_y_col");
+    const averageConditionSelect = document.getElementById("average_condition_col");
+    const averageReplicateSelect = document.getElementById("average_replicate_col");
+    const averageMethodSelect = document.getElementById("average_method");
+    const averageGridMethodSelect = document.getElementById("average_x_grid_method");
+    const averageGridPointsInput = document.getElementById("average_grid_points");
+    const averageRoundDecimalsInput = document.getElementById("average_x_round_decimals");
+    const averageHint = document.getElementById("average_hint");
+
     const secondaryModeSelect = document.getElementById("secondary_mode");
     const secondaryOptions = document.getElementById("secondary_options");
     const x2Block = document.getElementById("x2_block");
@@ -1326,6 +1427,84 @@
             });
     }
 
+
+    function selectFirstAvailable(select, candidates, fallbackIndex = 0) {
+        const values = Array.from(select.options).map(option => option.value);
+
+        for (const candidate of candidates) {
+            if (values.includes(candidate)) {
+                select.value = candidate;
+                return;
+            }
+        }
+
+        if (select.options.length > fallbackIndex) {
+            select.selectedIndex = fallbackIndex;
+        }
+    }
+
+    function toggleAverageOptions() {
+        if (!averageMethodSelect || !averageGridMethodSelect || !averageGridPointsInput || !averageRoundDecimalsInput) {
+            return;
+        }
+
+        const exactMode = averageMethodSelect.value === "exact";
+
+        averageGridMethodSelect.disabled = exactMode;
+        averageGridPointsInput.disabled = exactMode;
+        averageRoundDecimalsInput.disabled = !exactMode;
+    }
+
+    function loadAverageColumns(datasetId) {
+        if (!averageXSelect || !averageYSelect || !averageConditionSelect || !averageReplicateSelect) {
+            return;
+        }
+
+        clearSelect(averageXSelect);
+        clearSelect(averageYSelect);
+        clearSelect(averageConditionSelect);
+        clearSelect(averageReplicateSelect);
+
+        if (!datasetId) {
+            if (averageHint) {
+                averageHint.textContent = "Choose a combined dataset. The output dataset will contain y_mean, y_std, y_sem, n_replicates, and condition.";
+            }
+
+            return;
+        }
+
+        fetch(`/dataset/${datasetId}/columns`)
+            .then(response => response.json())
+            .then(data => {
+                data.column_names.forEach(column => {
+                    const type = data.column_types[column] || "unknown";
+                    const text = labelColumn(column, type);
+
+                    addOption(averageConditionSelect, column, text, null);
+                    addOption(averageReplicateSelect, column, text, null);
+
+                    if (type === "numeric") {
+                        addOption(averageXSelect, column, text, null);
+                        addOption(averageYSelect, column, text, null);
+                    }
+                });
+
+                selectFirstAvailable(averageXSelect, ["global_time_min", "E_RHE", "Potential_V", "T_s"], 0);
+                selectFirstAvailable(averageYSelect, ["j_mA_cm2", "Current_mA", "Im_A", "y"], 1);
+                selectFirstAvailable(averageConditionSelect, ["condition", "Condition", "group", "Group"], 0);
+                selectFirstAvailable(averageReplicateSelect, ["dataset_label", "source_file", "source_index", "replicate", "Replicate"], 0);
+
+                if (averageHint) {
+                    averageHint.innerHTML = `
+                        <strong>Rows:</strong> ${data.rows}<br>
+                        <strong>Numeric columns:</strong> ${data.numeric_columns.join(", ") || "None"}<br>
+                        <strong>Categorical columns:</strong> ${data.categorical_columns.join(", ") || "None"}<br>
+                        <span class="hint">After averaging, plot X = ${averageXSelect.value || "selected X"}, Y = y_mean, Group by = ${averageConditionSelect.value || "condition"}.</span>
+                    `;
+                }
+            });
+    }
+
     function loadDatasetInfo(datasetId) {
         if (!datasetId) {
             datasetInfo.textContent = "No dataset selected.";
@@ -1403,30 +1582,15 @@
             .filter(value => value && value !== "none");
     }
 
-    function cleanValueForAI(value) {
+    function normalizeColorForAI(value) {
         if (value === null || value === undefined) {
             return null;
         }
 
-        const cleanValue = String(value).trim();
-        const emptyLikeValues = ["none", "null", "n/a", "na", "undefined"];
+        const color = String(value).trim();
 
-        if (emptyLikeValues.includes(cleanValue.toLowerCase())) {
-            return "";
-        }
-
-        return cleanValue;
-    }
-
-    function normalizeColorForAI(value) {
-        const cleanValue = cleanValueForAI(value);
-
-        if (cleanValue === null || cleanValue === "") {
-            return null;
-        }
-
-        if (/^#[0-9A-Fa-f]{6}$/.test(cleanValue)) {
-            return cleanValue;
+        if (/^#[0-9A-Fa-f]{6}$/.test(color)) {
+            return color;
         }
 
         const namedColors = {
@@ -1439,31 +1603,20 @@
             navy: "#13294B",
             purple: "#9A4DFF",
             gray: "#808080",
-            grey: "#808080",
-            "uiuc orange": "#FF5F05",
-            "illinois orange": "#FF5F05",
-            "uiuc blue": "#13294B",
-            "illinois blue": "#13294B",
-            "navy blue": "#13294B",
-            "dark blue": "#13294B",
-            "light gray": "#D3D3D3",
-            "light grey": "#D3D3D3",
-            "dark gray": "#404040",
-            "dark grey": "#404040"
+            grey: "#808080"
         };
 
-        return namedColors[cleanValue.toLowerCase()] || null;
+        return namedColors[color.toLowerCase()] || null;
     }
 
     function setInputValueForAI(id, value) {
         const element = document.getElementById(id);
-        const cleanValue = cleanValueForAI(value);
 
-        if (!element || cleanValue === null) {
+        if (!element || value === null || value === undefined) {
             return;
         }
 
-        element.value = cleanValue;
+        element.value = value;
         element.dispatchEvent(new Event("input", {bubbles: true}));
         element.dispatchEvent(new Event("change", {bubbles: true}));
     }
@@ -1476,57 +1629,29 @@
         }
     }
 
-    function booleanValueForAI(value) {
-        if (value === null || value === undefined) {
-            return null;
-        }
-
-        if (typeof value === "boolean") {
-            return value;
-        }
-
-        if (typeof value === "number") {
-            return value !== 0;
-        }
-
-        const cleanValue = String(value).trim().toLowerCase();
-
-        if (["true", "yes", "on", "1", "checked"].includes(cleanValue)) {
-            return true;
-        }
-
-        if (["false", "no", "off", "0", "", "none", "null", "n/a", "na"].includes(cleanValue)) {
-            return false;
-        }
-
-        return Boolean(value);
-    }
-
     function setCheckboxValueForAI(id, value) {
         const element = document.getElementById(id);
-        const cleanValue = booleanValueForAI(value);
 
-        if (!element || cleanValue === null) {
+        if (!element || value === null || value === undefined) {
             return;
         }
 
-        element.checked = cleanValue;
+        element.checked = Boolean(value);
         element.dispatchEvent(new Event("change", {bubbles: true}));
     }
 
     function setSelectValueForAI(id, value) {
         const element = document.getElementById(id);
-        const cleanValue = cleanValueForAI(value);
 
-        if (!element || cleanValue === null) {
+        if (!element || value === null || value === undefined) {
             return false;
         }
 
+        const stringValue = String(value);
         const optionValues = Array.from(element.options).map(option => option.value);
-        const selectValue = cleanValue === "" && optionValues.includes("none") ? "none" : cleanValue;
 
-        if (optionValues.includes(selectValue)) {
-            element.value = selectValue;
+        if (optionValues.includes(stringValue)) {
+            element.value = stringValue;
             element.dispatchEvent(new Event("change", {bubbles: true}));
             return true;
         }
@@ -1535,11 +1660,15 @@
     }
 
     function applyAIPlotType(plotType) {
-        let requestedPlotType = cleanValueForAI(plotType) || "line";
+        const showMarkersCheck = document.getElementById("show_markers");
+        let requestedPlotType = plotType || "line";
 
         if (requestedPlotType === "line_scatter") {
             requestedPlotType = "line";
-            setCheckboxValueForAI("show_markers", true);
+
+            if (showMarkersCheck) {
+                showMarkersCheck.checked = true;
+            }
         }
 
         if (setSelectValueForAI("plot_type", requestedPlotType)) {
@@ -1651,7 +1780,7 @@
     }
 
     async function fillPlotFormFromAI(config) {
-        const requestedPlotType = cleanValueForAI(config.plot_type) || "line";
+        const requestedPlotType = config.plot_type || "line";
 
         setInputValueForAI("plot_title", config.plot_title);
         setSelectValueForAI("x_col", config.x_column);
@@ -1735,6 +1864,25 @@
         }
     }
 
+
+
+    if (averageDatasetSelect) {
+        averageDatasetSelect.addEventListener("change", () => {
+            loadAverageColumns(averageDatasetSelect.value);
+        });
+    }
+
+    if (averageMethodSelect) {
+        averageMethodSelect.addEventListener("change", () => {
+            toggleAverageOptions();
+        });
+    }
+
+    toggleAverageOptions();
+
+    if (averageDatasetSelect && averageDatasetSelect.value) {
+        loadAverageColumns(averageDatasetSelect.value);
+    }
 
     datasetSelect.addEventListener("change", () => {
         formState.x_col = null;
