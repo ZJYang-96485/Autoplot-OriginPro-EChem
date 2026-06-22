@@ -1053,42 +1053,6 @@ def reference_condition_color(group_name):
     return None
 
 
-def reference_condition_label(group_name):
-    text = str(group_name).strip()
-    compact = text.lower().replace(" ", "").replace("_", "").replace("-", "")
-
-    if "no3" in compact or "nano3" in compact:
-        return r"PBS+NaNO$_3$"
-
-    if compact == "pbs":
-        return "PBS"
-
-    return normalize_matplotlib_text(text)
-
-
-def reference_condition_sort_key(value):
-    compact = str(value).strip().lower().replace(" ", "").replace("_", "").replace("-", "")
-
-    if compact == "pbs":
-        return (0, compact)
-
-    if "no3" in compact or "nano3" in compact:
-        return (1, compact)
-
-    return (2, compact)
-
-
-def sort_reference_legend(handles, labels):
-    pairs = [(handle, label) for handle, label in zip(handles, labels) if str(label).strip()]
-
-    if not pairs:
-        return handles, labels
-
-    pairs = sorted(pairs, key=lambda item: reference_condition_sort_key(item[1]))
-
-    return [item[0] for item in pairs], [item[1] for item in pairs]
-
-
 def plot_grouped_curves(
     ax,
     df,
@@ -1122,11 +1086,8 @@ def plot_grouped_curves(
     if data.empty:
         raise ValueError("No valid data points were found for the selected group-by plot.")
 
-    grouped_items = list(data.groupby(group_col, sort=False))
-    grouped_items = sorted(grouped_items, key=lambda item: reference_condition_sort_key(item[0]))
-
-    for group_name, group in grouped_items:
-        label = reference_condition_label(group_name)
+    for group_name, group in data.groupby(group_col, sort=False):
+        label = normalize_matplotlib_text(str(group_name))
 
         if plot_type == "scatter":
             if group_color_mode == "same":
@@ -1395,8 +1356,7 @@ def setup_step_axis(
 ):
     top_axis = ax.twiny()
     top_axis.patch.set_alpha(0)
-    top_axis.set_xlabel(x_label if x_label else format_column_label(x_col), labelpad=label_pad)
-    top_axis.xaxis.set_label_coords(0.5, 1.14)
+    top_axis.set_xlabel(x_label if x_label else format_column_label(x_col))
     top_axis.xaxis.tick_top()
     top_axis.xaxis.set_label_position("top")
     top_axis.spines["bottom"].set_visible(False)
@@ -1465,7 +1425,6 @@ def setup_step_axis(
     ax.set_xticks(ticks)
     ax.set_xticklabels(labels, rotation=label_rotation, ha=label_alignment)
     ax.set_xlabel(step_axis_label if step_axis_label else format_column_label(step_value_col), labelpad=label_pad)
-    ax.xaxis.set_label_coords(0.5, -0.14)
 
     return top_axis
 
@@ -1618,57 +1577,6 @@ def format_column_label(column_name):
     text = text.replace(" cm3", " cm^-3")
 
     return normalize_matplotlib_text(text)
-
-
-
-def check_reference_protocol_coverage(df, x_col, y_col, group_col, x_min, x_max):
-    if x_col != "global_time_min" or y_col != "y_mean" or group_col != "condition":
-        return
-
-    if x_min is None or x_max is None:
-        return
-
-    if float(x_max) < 100:
-        return
-
-    required_conditions = {"PBS", "PBS+NaNO3"}
-    present_conditions = {str(value).strip() for value in df[group_col].dropna().unique()}
-
-    if not required_conditions.issubset(present_conditions):
-        return
-
-    expected_span = float(x_max) - float(x_min)
-
-    if expected_span <= 0:
-        return
-
-    incomplete = []
-
-    for condition, group in df.groupby(group_col, sort=False):
-        x = get_numeric_series(group, x_col).dropna()
-
-        if x.empty:
-            incomplete.append(f"{condition}: no valid X values")
-            continue
-
-        group_min = float(x.min())
-        group_max = float(x.max())
-        coverage = (group_max - group_min) / expected_span
-
-        if coverage < 0.85:
-            incomplete.append(
-                f"{condition}: covers {group_min:.2f} to {group_max:.2f} min "
-                f"({coverage * 100:.1f}% of requested {float(x_min):.0f}-{float(x_max):.0f} min range)"
-            )
-
-    if incomplete:
-        message = (
-            "Cannot reproduce the requested 0-160 min reference plot from the selected averaged dataset because "
-            "at least one condition does not cover the full protocol time range. "
-            "Do not stretch or mirror incomplete experimental data. "
-            "Missing/incomplete coverage: " + "; ".join(incomplete)
-        )
-        raise ValueError(message)
 
 
 def create_plot(
@@ -1930,8 +1838,6 @@ def create_plot(
 
     if y_tick_mode == "auto" and (y_major_interval is not None or y_minor_interval is not None):
         y_tick_mode = "uniform"
-
-    check_reference_protocol_coverage(df, x_col, y_col, group_col, x_min, x_max)
 
     step_axis_decimal_places = clamp_int(step_axis_decimal_places, 1, 0, 6)
     step_axis_label_stride = clamp_int(step_axis_label_stride, 2, 1, 100)
@@ -2199,7 +2105,6 @@ def create_plot(
         labels += labels_secondary
 
     if show_legend and handles and any(labels):
-        handles, labels = sort_reference_legend(handles, labels)
         legend_title = group_label if group_col and group_label else None
         resolved_legend_location = choose_legend_location_from_axes(ax) if legend_location == "auto" else legend_location
         legend_kwargs = {

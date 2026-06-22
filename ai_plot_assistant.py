@@ -745,16 +745,8 @@ def _apply_electrochem_reference_defaults(config, column_names, user_request):
     if "global_time_min" in columns_lower:
         config["x_column"] = columns_lower["global_time_min"]
 
-    averaged_required = any(term in text for term in ["averaged", "averaged_replicates", "selected averaged dataset", "use the newest averaged"])
-
     if "y_mean" in columns_lower:
         config["y_column"] = columns_lower["y_mean"]
-    elif averaged_required:
-        raise ValueError(
-            "The reference electrochemical plot requires the selected averaged_replicates dataset with a y_mean column. "
-            "The selected dataset does not contain y_mean, so it is probably combined_data or raw data. "
-            "Select the newest averaged_replicates dataset and plot again."
-        )
     elif "j_ma_cm2" in columns_lower:
         config["y_column"] = columns_lower["j_ma_cm2"]
 
@@ -835,8 +827,7 @@ def _apply_electrochem_reference_defaults(config, column_names, user_request):
 
     config["notes"] = (
         "Reference electrochemical plot preset applied: top time axis, bottom potential labels, "
-        "same top/bottom label padding, horizontal grid only, no legend title/frame, "
-        "legend ordered as PBS then PBS+NaNO3, PBS purple and PBS+NaNO3 red."
+        "horizontal grid only, no legend title/frame, PBS purple and PBS+NaNO3 red."
     )
 
     return config
@@ -931,7 +922,7 @@ def parse_plot_request(user_request, column_names):
             "For line or scatter plots, always choose an existing Y column. "
             "If y_mean exists, prefer y_mean for averaged datasets. If y_mean does not exist but j_mA_cm2 exists, use j_mA_cm2. "
             "Use 'none' for optional column fields that are not needed, but never use 'none' for y_column in line or scatter plots. "
-            "For the reference electrochemical PBS/PBS+NaNO3 plot, set group_label to an empty string, legend_frame=false, legend_location='lower right', grid_axis='y', grid_which='both', figure_width=8, figure_height=5.5, top_x_label='$\\mathbf{t\\ /\\ min}$', step_axis_label='$\\mathbf{E\\ /\\ V\\ vs.\\ RHE}$', and y_label='$\\mathbf{j\\ /\\ mA\\ cm^{-2}}$'. "
+            "For the reference electrochemical PBS/PBS+NaNO3 plot, set group_label to an empty string, legend_frame=false, legend_location='lower right', grid_axis='y', grid_which='both', figure_width=8, figure_height=5.5, top_x_label='$\mathbf{t\ /\ min}$', step_axis_label='$\mathbf{E\ /\ V\ vs.\ RHE}$', and y_label='$\mathbf{j\ /\ mA\ cm^{-2}}$'. "
             "Use null for numeric, boolean, and color fields when the user did not specify them and no style profile is clearly requested. "
             "When the user asks for a journal or output style, select the closest style_profile from the supported profiles. "
             "Use style_profile='publication' for generic publication-quality scientific figures. "
