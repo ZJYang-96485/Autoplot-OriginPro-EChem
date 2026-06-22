@@ -722,22 +722,157 @@ def _apply_averaged_replicate_defaults(config, column_names, user_request):
 
 
 
+
+def _has_column(column_names, *names):
+    lower = {str(column).strip().lower(): column for column in column_names}
+
+    for name in names:
+        if str(name).strip().lower() in lower:
+            return lower[str(name).strip().lower()]
+
+    return ""
+
+
+def _column_contains(column_names, *terms):
+    for column in column_names:
+        lower = str(column).strip().lower()
+
+        if any(str(term).lower() in lower for term in terms):
+            return column
+
+    return ""
+
+
+def _is_spectroscopy_schema(column_names):
+    has_wavelength = bool(_has_column(column_names, "wavelength_nm") or _column_contains(column_names, "wavelength"))
+    has_absorbance = bool(_has_column(column_names, "absorbance") or _column_contains(column_names, "absorbance", "abs"))
+
+    return has_wavelength and has_absorbance
+
+
+def _is_electrochem_reference_schema(column_names):
+    has_time = bool(_has_column(column_names, "global_time_min", "time_min", "time", "t"))
+    has_current_density = bool(_has_column(column_names, "y_mean", "j_mA_cm2", "current_density", "current_density_mA_cm2"))
+    has_potential = bool(_has_column(column_names, "E_RHE", "Vf", "potential", "voltage"))
+
+    return has_time and has_current_density and (has_potential or bool(_has_column(column_names, "condition")))
+
+
+def _apply_spectroscopy_defaults(config, column_names, user_request):
+    text = str(user_request).lower()
+    spectroscopy_request = any(term in text for term in [
+        "uv", "uv-vis", "uvvis", "spectrum", "spectra", "spectroscopy", "wavelength", "absorbance", "abs"
+    ])
+
+    if not (_is_spectroscopy_schema(column_names) or spectroscopy_request):
+        return config
+
+    x_column = _has_column(column_names, "wavelength_nm") or _column_contains(column_names, "wavelength")
+    y_column = _has_column(column_names, "absorbance") or _column_contains(column_names, "absorbance", "abs")
+    group_column = _has_column(column_names, "condition", "sample", "group", "label")
+
+    if x_column:
+        config["x_column"] = x_column
+
+    if y_column:
+        config["y_column"] = y_column
+
+    if group_column:
+        config["group_column"] = group_column
+
+    requested_nature = "nature" in text
+
+    config.update({
+        "plot_title": "",
+        "plot_type": "line",
+        "x_label": r"$\mathbf{Wavelength\ /\ nm}$",
+        "y_label": r"$\mathbf{Absorbance}$",
+        "x_min": None,
+        "x_max": None,
+        "y_min": None,
+        "y_max": None,
+        "style_profile": "nature" if requested_nature else config.get("style_profile", "publication"),
+        "data_reduction": "raw",
+        "summary_group_column": "none",
+        "use_step_axis": False,
+        "step_axis_mode": "auto_data",
+        "step_axis_placement": "uniform",
+        "step_axis_value_column": "none",
+        "step_axis_group_column": "none",
+        "step_axis_label": "",
+        "step_axis_custom_labels": "",
+        "step_axis_custom_positions": "",
+        "secondary_mode": "none",
+        "x2_column": "none",
+        "y2_column": "none",
+        "top_x_label": "",
+        "right_y_label": "",
+        "x_tick_mode": "auto",
+        "x_major_interval": None,
+        "x_minor_interval": None,
+        "x_custom_ticks": "",
+        "x_custom_tick_labels": "",
+        "y_tick_mode": "auto",
+        "y_major_interval": None,
+        "y_minor_interval": None,
+        "y_custom_ticks": "",
+        "y_custom_tick_labels": "",
+        "line_order": "sort_x",
+        "line_width": 1.6,
+        "opacity": 1.0,
+        "show_markers": False,
+        "show_legend": True if group_column else False,
+        "group_label": "",
+        "group_color_mode": "auto",
+        "legend_location": "best",
+        "legend_frame": False,
+        "figure_width": 7.5,
+        "figure_height": 5.0,
+        "figure_dpi": 300,
+        "axis_label_size": 18,
+        "tick_label_size": 13,
+        "axis_label_weight": "bold",
+        "spine_width": 1.2,
+        "tick_width": 1.2,
+        "tick_length": 5,
+        "tick_direction": "in",
+        "show_full_frame": True,
+        "show_top_ticks": True,
+        "show_bottom_ticks": True,
+        "show_left_ticks": True,
+        "show_right_ticks": True,
+        "show_grid": False,
+        "grid_axis": "both",
+        "grid_which": "major",
+        "bottom_margin": None,
+        "primary_label": "",
+        "bottom_annotation": ""
+    })
+
+    config["notes"] = (
+        "Spectroscopy schema detected. Electrochemical reference-axis settings were disabled. "
+        "Using wavelength as X, absorbance as Y, and condition/sample as group when available."
+    )
+
+    return config
+
+
 def _apply_electrochem_reference_defaults(config, column_names, user_request):
     text = str(user_request).lower()
-    trigger_terms = [
-        "reference",
-        "reproduce",
-        "electrochemical",
-        "publication",
-        "pbs",
-        "nano3",
-        "no3",
-        "rhe",
-        "bottom labels",
-        "horizontal grid"
-    ]
 
-    if not any(term in text for term in trigger_terms):
+    if _is_spectroscopy_schema(column_names):
+        return config
+
+    electrochem_request = any(term in text for term in [
+        "electrochem", "electrochemical", "rhe", "reference electrode", "pbs", "nano3", "no3",
+        "current density", "potential", "chrono", "gamry", "dta", "orr", "her", "oer"
+    ])
+
+    reference_plot_request = any(term in text for term in [
+        "reference plot", "reproduce", "bottom potential", "potential labels", "e / v", "vs. rhe"
+    ])
+
+    if not (electrochem_request and (_is_electrochem_reference_schema(column_names) or reference_plot_request)):
         return config
 
     columns_lower = {str(column).lower(): column for column in column_names}
@@ -826,20 +961,24 @@ def _apply_electrochem_reference_defaults(config, column_names, user_request):
     })
 
     config["notes"] = (
-        "Reference electrochemical plot preset applied: top time axis, bottom potential labels, "
-        "horizontal grid only, no legend title/frame, PBS purple and PBS+NaNO3 red."
+        "Electrochemical reference plot preset applied because the request and dataset schema both support it."
     )
 
     return config
 
-
 def _choose_default_y_column(column_names):
     preferred = [
         "y_mean",
+        "absorbance",
+        "Abs",
         "j_mA_cm2",
         "j_A_cm2",
         "current_density",
         "current_density_mA_cm2",
+        "intensity",
+        "signal",
+        "response",
+        "y_value",
         "I_A",
         "Im_A",
         "Current",
@@ -922,7 +1061,7 @@ def parse_plot_request(user_request, column_names):
             "For line or scatter plots, always choose an existing Y column. "
             "If y_mean exists, prefer y_mean for averaged datasets. If y_mean does not exist but j_mA_cm2 exists, use j_mA_cm2. "
             "Use 'none' for optional column fields that are not needed, but never use 'none' for y_column in line or scatter plots. "
-            "For the reference electrochemical PBS/PBS+NaNO3 plot, set group_label to an empty string, legend_frame=false, legend_location='lower right', grid_axis='y', grid_which='both', figure_width=8, figure_height=5.5, top_x_label='$\mathbf{t\ /\ min}$', step_axis_label='$\mathbf{E\ /\ V\ vs.\ RHE}$', and y_label='$\mathbf{j\ /\ mA\ cm^{-2}}$'. "
+            "Apply the electrochemical PBS/PBS+NaNO3 reference-axis preset only when the user's request explicitly asks for an electrochemical/RHE/PBS/NO3 reference plot and the available columns support electrochemical data. Do not apply electrochemical defaults merely because the user requests publication or Nature style. "
             "Use null for numeric, boolean, and color fields when the user did not specify them and no style profile is clearly requested. "
             "When the user asks for a journal or output style, select the closest style_profile from the supported profiles. "
             "Use style_profile='publication' for generic publication-quality scientific figures. "
@@ -930,6 +1069,7 @@ def parse_plot_request(user_request, column_names):
             "Use style_profile='thesis', 'presentation', or 'poster' when the figure is intended for those formats. "
             "Use style_profile='monochrome' for black-and-white printing, 'colorblind' for colorblind-safe plots, and 'dark' for dark-background slides. "
             "For electrochemistry, common axis labels include E / V vs. RHE, j / mA cm^-2, I / A, t / s, and t / min, but still follow the user's request. "
+            "For spectroscopy or UV-Vis datasets with wavelength and absorbance columns, use wavelength as X, absorbance as Y, condition/sample as group, disable secondary axes and step axes, clear electrochemical labels, and use automatic axis limits. "
             "Use Matplotlib mathtext for scientific labels when appropriate, such as '$j$ / mA cm$^{-2}$', '$E$ / V vs. RHE', and '$t$ / min. "
             "Never return the literal string 'none', 'null', or 'n/a' for plot_title, primary_label, bottom_annotation, or notes; use an empty string instead. "
             "If the available columns include y_mean, y_std, y_sem, n_replicates, and condition, treat this as a pre-averaged replicate dataset. "
@@ -956,6 +1096,7 @@ def parse_plot_request(user_request, column_names):
     config = json.loads(output_text)
     config = _merge_profile_defaults(config)
     config = _apply_averaged_replicate_defaults(config, column_names, user_request)
+    config = _apply_spectroscopy_defaults(config, column_names, user_request)
     config = _apply_electrochem_reference_defaults(config, column_names, user_request)
     config = _validate_config(config, column_names)
 
