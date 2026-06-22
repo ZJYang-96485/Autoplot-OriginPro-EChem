@@ -61,6 +61,24 @@ def _float(value, default):
         return default
 
 
+
+def _to_numeric_series(values):
+    if isinstance(values, pd.DataFrame):
+        values = values.iloc[:, 0]
+
+    if isinstance(values, pd.Series):
+        cleaned = (
+            values.astype(str)
+            .str.strip()
+            .str.replace("\u2212", "-", regex=False)
+            .str.replace(",", ".", regex=False)
+        )
+        cleaned = cleaned.mask(cleaned.str.lower().isin(["", "none", "nan", "na", "n/a"]))
+        return _to_numeric_series(cleaned, errors="coerce")
+
+    return _to_numeric_series(values, errors="coerce")
+
+
 def _normalize_averaging_method(value):
     value = _text(value).lower()
 
@@ -180,7 +198,7 @@ def _ensure_global_time_min(csv_path, requested_time_col=""):
     if not time_col:
         return False
 
-    time_values = pd.to_numeric(df[time_col], errors="coerce")
+    time_values = _to_numeric_series(df[time_col], errors="coerce")
     lower_time_col = str(time_col).strip().lower()
 
     if "min" in lower_time_col:
@@ -313,7 +331,7 @@ def _create_converted_dataset(
             f"Available columns: {', '.join(map(str, columns))}"
         )
 
-    time_values = pd.to_numeric(df[resolved_time_col], errors="coerce")
+    time_values = _to_numeric_series(df[resolved_time_col], errors="coerce")
     lower_time_col = str(resolved_time_col).strip().lower()
 
     if "min" in lower_time_col:
@@ -330,7 +348,7 @@ def _create_converted_dataset(
                 f"Available columns: {', '.join(map(str, columns))}"
             )
 
-        potential_values = pd.to_numeric(df[resolved_potential_col], errors="coerce")
+        potential_values = _to_numeric_series(df[resolved_potential_col], errors="coerce")
         df[potential_output_col or "E_RHE"] = potential_values + reference_offset_v + 0.0591 * ph_value
 
     if convert_current:
@@ -345,7 +363,7 @@ def _create_converted_dataset(
         if electrode_area_cm2 <= 0:
             raise ValueError("Current-density conversion requires electrode_area_cm2 > 0.")
 
-        current_values = pd.to_numeric(df[resolved_current_col], errors="coerce")
+        current_values = _to_numeric_series(df[resolved_current_col], errors="coerce")
         lower_current_col = str(resolved_current_col).strip().lower()
 
         if "ma" in lower_current_col and "/a" not in lower_current_col:
@@ -714,6 +732,51 @@ def _replicate_group_from_label(label):
     return stem or Path(_text(label)).stem or "replicate"
 
 
+
+def _condition_aware_replicate_group(condition, source_label):
+    condition = _text(condition)
+
+    if condition == "PBS":
+        return "PBS_stitched_sequence"
+
+    return _replicate_group_from_label(source_label)
+
+
+def _condition_ranges_for_csv(csv_path, x_col, y_col, condition_col, replicate_col):
+    csv_path = Path(csv_path)
+
+    if not csv_path.exists():
+        return []
+
+    df = pd.read_csv(csv_path)
+    required = {x_col, y_col, condition_col, replicate_col}
+
+    if not required.issubset(set(df.columns)):
+        return []
+
+    df[x_col] = _to_numeric_series(df[x_col], errors="coerce")
+    df[y_col] = _to_numeric_series(df[y_col], errors="coerce")
+
+    summaries = []
+
+    for condition, group in df.groupby(condition_col, sort=False):
+        x_values = group[x_col].dropna()
+        y_values = group[y_col].dropna()
+
+        summaries.append({
+            "condition": str(condition),
+            "rows": int(len(group)),
+            "x_min": float(x_values.min()) if not x_values.empty else None,
+            "x_max": float(x_values.max()) if not x_values.empty else None,
+            "y_min": float(y_values.min()) if not y_values.empty else None,
+            "y_max": float(y_values.max()) if not y_values.empty else None,
+            "replicate_labels": sorted([str(value) for value in group[replicate_col].dropna().astype(str).unique().tolist()])[:20],
+            "n_replicate_labels": int(group[replicate_col].dropna().astype(str).nunique())
+        })
+
+    return summaries
+
+
 def _stitch_local_time_to_global_time(
     csv_path,
     x_col="global_time_min",
@@ -735,11 +798,14 @@ def _stitch_local_time_to_global_time(
             "reason": f"Missing required columns for stitching: {', '.join(sorted(required - set(df.columns)))}"
         }
 
-    df[x_col] = pd.to_numeric(df[x_col], errors="coerce")
+    df[x_col] = _to_numeric_series(df[x_col], errors="coerce")
     df["_source_dataset_label"] = df[replicate_col].astype(str)
     df["_sequence_index"] = df["_source_dataset_label"].map(_sequence_index_from_label)
     df["_sequence_order"] = df["_source_dataset_label"].map(_sequence_order_from_label)
-    df["_replicate_group"] = df["_source_dataset_label"].map(_replicate_group_from_label)
+    df["_replicate_group"] = df.apply(
+        lambda row: _condition_aware_replicate_group(row[condition_col], row["_source_dataset_label"]),
+        axis=1
+    )
 
     stitched_parts = []
 
@@ -763,7 +829,7 @@ def _stitch_local_time_to_global_time(
         offset = 0.0
 
         for piece in pieces:
-            valid_x = pd.to_numeric(piece[x_col], errors="coerce").dropna()
+            valid_x = _to_numeric_series(piece[x_col], errors="coerce").dropna()
 
             if valid_x.empty:
                 piece["source_dataset_label"] = piece["_source_dataset_label"]
@@ -775,7 +841,7 @@ def _stitch_local_time_to_global_time(
             local_max = float(valid_x.max())
             local_span = max(local_max - local_min, 0.0)
 
-            piece[x_col] = pd.to_numeric(piece[x_col], errors="coerce") - local_min + offset
+            piece[x_col] = _to_numeric_series(piece[x_col], errors="coerce") - local_min + offset
             piece["source_dataset_label"] = piece["_source_dataset_label"]
             piece[replicate_col] = replicate_group
             piece["sequence_index"] = int(piece["_sequence_index"].iloc[0])
@@ -799,7 +865,7 @@ def _stitch_local_time_to_global_time(
     summaries = []
 
     for (condition, replicate), group in stitched.groupby([condition_col, replicate_col], sort=False):
-        x_values = pd.to_numeric(group[x_col], errors="coerce").dropna()
+        x_values = _to_numeric_series(group[x_col], errors="coerce").dropna()
 
         summaries.append({
             "condition": str(condition),
@@ -867,7 +933,7 @@ def _ensure_average_input_columns(
         )
 
         if source_time_col:
-            time_values = pd.to_numeric(df[source_time_col], errors="coerce")
+            time_values = _to_numeric_series(df[source_time_col], errors="coerce")
             lower = str(source_time_col).lower()
 
             if "min" in lower:
@@ -897,7 +963,7 @@ def _ensure_average_input_columns(
         )
 
         if source_y_col:
-            values = pd.to_numeric(df[source_y_col], errors="coerce")
+            values = _to_numeric_series(df[source_y_col], errors="coerce")
             lower = str(source_y_col).lower()
 
             if source_y_col == "j_A_cm2" or ("a_cm2" in lower and "ma" not in lower):
@@ -1313,6 +1379,13 @@ def execute_workflow_plan(plan, context):
                 replicate_col=replicate_col,
                 electrode_area_cm2=_float(params.get("electrode_area_cm2"), 0.283)
             )
+            average_input_ranges = _condition_ranges_for_csv(
+                csv_path=Path(dataset["file_path"]),
+                x_col=x_col,
+                y_col=y_col,
+                condition_col=condition_col,
+                replicate_col=replicate_col
+            )
             result = average_condition_replicates(
                 input_path=Path(dataset["file_path"]),
                 output_path=output_path,
@@ -1327,6 +1400,7 @@ def execute_workflow_plan(plan, context):
                 min_replicates=_int(params.get("min_replicates"), 1)
             )
             result["column_check"] = column_check
+            result["average_input_ranges"] = average_input_ranges
             registered = state["register_dataset"](
                 file_path=output_path,
                 dataset_type="averaged_replicates",
