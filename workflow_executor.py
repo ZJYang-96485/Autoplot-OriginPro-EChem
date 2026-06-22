@@ -83,6 +83,16 @@ def _sequence_prefix(file_name):
     return stem or Path(str(file_name)).stem
 
 
+def _normalized_ab_prefix(file_name):
+    prefix = _sequence_prefix(file_name)
+    prefix = re.sub(r"CHRONOA[_-]*B$", "CHRONOA", prefix, flags=re.IGNORECASE)
+    prefix = re.sub(r"CHRONOA[_-]*B[_-]*$", "CHRONOA", prefix, flags=re.IGNORECASE)
+    prefix = prefix.replace("CHRONOA_B", "CHRONOA")
+    prefix = prefix.replace("chronoa_b", "chronoa")
+    prefix = prefix.strip("_- ")
+    return prefix
+
+
 def _dataset_label(file_name):
     condition = _infer_condition(file_name)
 
@@ -90,11 +100,11 @@ def _dataset_label(file_name):
         return "PBS_stitched_sequence"
 
     if condition == "PBS+NaNO3":
-        prefix = _sequence_prefix(file_name)
+        prefix = _normalized_ab_prefix(file_name)
         prefix = re.sub(r"[^A-Za-z0-9]+", "_", prefix).strip("_")
         return prefix or "PBS_NaNO3_stitched_sequence"
 
-    return _sequence_prefix(file_name)
+    return _normalized_ab_prefix(file_name)
 
 
 def _read_dta_curve(path):
@@ -257,10 +267,7 @@ def _sort_segment_key(frame):
     is_b = int(row["is_b_sequence"])
     number = int(row["sequence_number"])
 
-    if condition == "PBS":
-        return (condition, label, is_b, number)
-
-    return (condition, label, number)
+    return (condition, label, is_b, number)
 
 
 def _stitch_segments(segments):
@@ -418,6 +425,40 @@ def _summarize_condition_ranges(df, x_col="global_time_min", y_col="j_mA_cm2"):
     return summaries
 
 
+
+def _summarize_sequence_order(df):
+    summaries = []
+
+    columns = {"condition", "dataset_label", "source_file", "sequence_number", "is_b_sequence", "global_time_min", "j_mA_cm2"}
+
+    if not columns.issubset(set(df.columns)):
+        return summaries
+
+    for (condition, label), group in df.groupby(["condition", "dataset_label"], sort=False):
+        files = (
+            group[["source_file", "sequence_number", "is_b_sequence"]]
+            .drop_duplicates()
+            .sort_values(["is_b_sequence", "sequence_number", "source_file"])
+        )
+
+        x = _to_number(group["global_time_min"]).dropna()
+        y = _to_number(group["j_mA_cm2"]).dropna()
+
+        summaries.append({
+            "condition": str(condition),
+            "dataset_label": str(label),
+            "n_sequence_files": int(len(files)),
+            "first_files": files["source_file"].astype(str).head(8).tolist(),
+            "last_files": files["source_file"].astype(str).tail(8).tolist(),
+            "x_min": float(x.min()) if not x.empty else None,
+            "x_max": float(x.max()) if not x.empty else None,
+            "y_min": float(y.min()) if not y.empty else None,
+            "y_max": float(y.max()) if not y.empty else None
+        })
+
+    return summaries
+
+
 def execute_workflow_plan(plan, context):
     processed_dir = Path(context["processed_data_dir"])
     processed_dir.mkdir(parents=True, exist_ok=True)
@@ -500,6 +541,7 @@ def execute_workflow_plan(plan, context):
                 ],
                 "condition_counts": condition_counts,
                 "combined_summary": _summarize_condition_ranges(combined, "global_time_min", "j_mA_cm2"),
+                "sequence_order_summary": _summarize_sequence_order(combined),
                 "averaged_summary": _summarize_condition_ranges(averaged.rename(columns={"y_mean": "j_mA_cm2"}), "global_time_min", "j_mA_cm2"),
                 "errors": errors[:10]
             }
