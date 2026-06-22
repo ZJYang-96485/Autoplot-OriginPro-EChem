@@ -811,10 +811,18 @@ def _stitch_local_time_to_global_time(
 
     for (condition, replicate_group), group in df.groupby([condition_col, "_replicate_group"], sort=False):
         pieces = []
+        seen_sequence_orders = set()
 
         for source_label, file_group in group.groupby("_source_dataset_label", sort=False):
+            sequence_order = _sequence_order_from_label(source_label)
+
+            if sequence_order in seen_sequence_orders:
+                continue
+
+            seen_sequence_orders.add(sequence_order)
+
             local = file_group.copy()
-            local["_sequence_order"] = _sequence_order_from_label(source_label)
+            local["_sequence_order"] = sequence_order
             local["_sequence_index"] = _sequence_index_from_label(source_label)
             pieces.append(local)
 
