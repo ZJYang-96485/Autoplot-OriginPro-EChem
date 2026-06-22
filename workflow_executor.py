@@ -7,6 +7,45 @@ import pandas as pd
 import numpy as np
 
 
+def _json_safe(value):
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+
+    if isinstance(value, pd.DataFrame):
+        return _json_safe(value.to_dict(orient="records"))
+
+    if isinstance(value, pd.Series):
+        return _json_safe(value.tolist())
+
+    if isinstance(value, np.ndarray):
+        return _json_safe(value.tolist())
+
+    if isinstance(value, np.generic):
+        return _json_safe(value.item())
+
+    if isinstance(value, float):
+        if not np.isfinite(value):
+            return None
+        return value
+
+    if isinstance(value, int):
+        return value
+
+    if value is pd.NA:
+        return None
+
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+
+    return value
+
+
 def _timestamp():
     return datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -963,10 +1002,12 @@ def execute_workflow_plan(plan, context):
             f"Detected parsers: {parsers}. Review file_inspection diagnostics before processing."
         )
 
-    return {
+    result = {
         "created_dataset_ids": created_dataset_ids,
         "last_dataset_ids": last_dataset_ids,
         "plot_urls": [],
         "step_results": step_results,
         "file_inspection": inspections
     }
+
+    return _json_safe(result)
