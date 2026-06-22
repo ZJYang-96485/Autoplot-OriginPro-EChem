@@ -79,67 +79,64 @@ The AI Plot Assistant is designed to help users fill plotting settings more effi
 
 Users should prepare their dataset first. This includes combining files, assigning condition names, converting variables, averaging replicates, and creating any columns required for plotting. After the dataset is ready, the AI Plot Assistant can help generate the plotting configuration.
 
-### General Prompt Template
+## Guideline 1: Using AI to Create a Data-Processing Prompt
 
-```text
-Create a [style] plot.
+This software is designed to process different electrochemical datasets, but the correct workflow depends strongly on the file structure, naming convention, experiment type, and required conversions. Users should not reuse a prompt from another dataset without adapting it.
 
-Use [X column name] as the X column and [Y column name] as the Y column.
-Use a [line / scatter / bar / histogram / box] plot.
-If needed, group the plot by [group column name].
+When asking an AI assistant to create a data-processing prompt, provide the experimental structure instead of only asking for a generic workflow. The AI should be asked to identify file types, readable columns, condition groups, replicate groups, sequence order, stitching rules, conversion formulas, and expected output datasets.
 
-Set the X-axis label to "[X-axis label]".
-Set the Y-axis label to "[Y-axis label]".
-Set the plot title to "[plot title]" or leave it empty.
+A good data-processing prompt should clearly specify:
 
-Set X range from [minimum] to [maximum].
-Set Y range from [minimum] to [maximum].
+* total number of files
+* expected number of files per condition or subset
+* file type, when known
+* whether files are independent replicates or sequential segments
+* how conditions should be inferred from filenames or columns
+* how sequence numbers should be interpreted
+* which numbers in filenames should be ignored, such as rpm, layer count, dates, or sample IDs
+* required unit conversions
+* electrode area, reference potential shift, pH correction, or other electrochemical constants
+* required output columns
+* whether the software should stop and report diagnostics when files are missing or ambiguous
 
-Use [color] for the line color and [color] for the marker color.
-Use line width [value], marker size [value], and opacity [value].
+The prompt should instruct the software not to silently guess when file assignment is ambiguous. It should also prevent unsafe operations such as stretching, mirroring, extrapolating, or fabricating missing data.
 
-Show or hide the legend.
-Show or hide grid lines.
-Use a full frame or open frame.
-Use inward, outward, or inout ticks.
+Recommended AI instruction:
 
-Set X tick mode to [auto / uniform / custom].
-Set Y tick mode to [auto / uniform / custom].
+1. Consult your own AI for prompt suggestion.
 
-Use figure width [value], figure height [value], and DPI [value].
-```
+“Create a data-processing prompt for this software. The prompt should inspect the uploaded files, infer the safest workflow, define condition mapping, determine whether files should be stitched or averaged, apply the required electrochemical conversions, and stop with diagnostics if the file structure is ambiguous. Do not make assumptions that are not supported by filenames, metadata, or column names.”
 
-### Example: Nature-Style Electrochemistry Plot
+2. Run workflow with prompts in this software app.
 
-```text
-Create a Nature-style electrochemistry line plot.
+## Guideline 2: Using AI to Create a Plotting Prompt
 
-Use global_time_min as the X column and j_mA_cm2 as the Y column.
-Use a line plot with small markers.
+Plotting prompts should be created after the data-processing workflow is defined. A plotting prompt should describe how to visualize the processed dataset, not how to repair or reinterpret incorrectly processed data.
 
-Set the X-axis label to "$t$ / min".
-Set the Y-axis label to "$j$ / mA cm$^{-2}$".
-Leave the plot title empty.
+When asking an AI assistant to create a plotting prompt, specify which processed dataset should be used, which columns should be mapped to X, Y, and grouping variables, and whether the plot should show raw curves, stitched curves, averaged curves, or replicate statistics.
 
-Set X range from 0 to 160.
-Set Y range from -95 to 20.
+A good plotting prompt should clearly specify:
 
-Use black for the line color and black for the marker color.
-Use line width 1.2, marker size 4, and opacity 1.0.
+* which dataset type to use, such as `combined_data` or `averaged_replicates`
+* X column
+* Y column
+* group or condition column
+* whether to show raw files, stitched sequences, averaged curves, or error bars
+* axis labels and units
+* axis ranges only when supported by the data
+* legend labels and order
+* color rules
+* marker and line style
+* grid, frame, tick, and typography preferences
+* whether a secondary or custom axis is scientifically justified
+* what the software should do when required columns, conditions, or data coverage are missing
 
-Do not show the legend unless there is more than one curve.
-Show a full frame.
-Use inward ticks.
-Show top, bottom, left, and right ticks.
-Do not show grid lines.
+The plotting prompt should not ask the software to fix incomplete processing. If a condition does not cover the requested range, or if a required column is missing, the plotter should stop and report the issue instead of stretching curves, smoothing artifacts, or creating misleading figures.
 
-Use figure width 3.5, figure height 2.6, and DPI 300.
-Use normal axis label weight.
-Use axis label font size 7.
-Use tick label font size 6.
-Use title font size 7.
-Use legend font size 6.
-```
+Recommended AI instruction:
+
+“Create a plotting prompt for this software based on the processed dataset. The prompt should map the correct columns, preserve the experimental data shape, apply publication-style formatting, and include validation checks for required columns, conditions, and data coverage. The prompt should stop with diagnostics instead of generating a misleading plot when the selected dataset is incomplete or incompatible.”
+
 
 The Nature-style preset is intended as a convenient starting point for clean, compact scientific figures. It is not an official journal template. Users should always check the final formatting requirements of the target journal before submission.
 
