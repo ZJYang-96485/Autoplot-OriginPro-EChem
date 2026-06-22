@@ -62,7 +62,7 @@ def _float(value, default):
 
 
 
-def _to_numeric_series(values, *args, **kwargs):
+def _to_numeric_series(values):
     if isinstance(values, pd.DataFrame):
         values = values.iloc[:, 0]
 
@@ -74,9 +74,9 @@ def _to_numeric_series(values, *args, **kwargs):
             .str.replace(",", ".", regex=False)
         )
         cleaned = cleaned.mask(cleaned.str.lower().isin(["", "none", "nan", "na", "n/a"]))
-        return _to_numeric_series(cleaned, errors="coerce")
+        return pd.to_numeric(cleaned, errors="coerce")
 
-    return _to_numeric_series(values, errors="coerce")
+    return pd.to_numeric(values, errors="coerce")
 
 
 def _normalize_averaging_method(value):
@@ -198,7 +198,7 @@ def _ensure_global_time_min(csv_path, requested_time_col=""):
     if not time_col:
         return False
 
-    time_values = _to_numeric_series(df[time_col], errors="coerce")
+    time_values = pd.to_numeric(df[time_col], errors="coerce")
     lower_time_col = str(time_col).strip().lower()
 
     if "min" in lower_time_col:
@@ -829,7 +829,7 @@ def _stitch_local_time_to_global_time(
         offset = 0.0
 
         for piece in pieces:
-            valid_x = _to_numeric_series(piece[x_col], errors="coerce").dropna()
+            valid_x = pd.to_numeric(piece[x_col], errors="coerce").dropna()
 
             if valid_x.empty:
                 piece["source_dataset_label"] = piece["_source_dataset_label"]
@@ -841,7 +841,7 @@ def _stitch_local_time_to_global_time(
             local_max = float(valid_x.max())
             local_span = max(local_max - local_min, 0.0)
 
-            piece[x_col] = _to_numeric_series(piece[x_col], errors="coerce") - local_min + offset
+            piece[x_col] = pd.to_numeric(piece[x_col], errors="coerce") - local_min + offset
             piece["source_dataset_label"] = piece["_source_dataset_label"]
             piece[replicate_col] = replicate_group
             piece["sequence_index"] = int(piece["_sequence_index"].iloc[0])
