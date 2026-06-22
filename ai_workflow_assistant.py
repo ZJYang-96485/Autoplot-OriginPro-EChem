@@ -1,14 +1,7 @@
-import json
-import os
 
-from dotenv import load_dotenv
-from openai import OpenAI
+import re
+from pathlib import Path
 
-
-load_dotenv()
-
-AI_WORKFLOW_MODEL = os.getenv("AI_WORKFLOW_MODEL", os.getenv("AI_MODEL", "gpt-5.5"))
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 ALLOWED_ACTIONS = {
     "clean_files",
@@ -19,231 +12,268 @@ ALLOWED_ACTIONS = {
     "plot"
 }
 
-WORKFLOW_PLAN_SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        "workflow_name": {"type": "string"},
-        "workflow_type": {
-            "type": "string",
-            "enum": [
-                "plot_only",
-                "single_file_to_plot",
-                "multi_file_to_plot",
-                "replicate_average_to_plot",
-                "unknown"
-            ]
-        },
-        "summary": {"type": "string"},
-        "requires_user_confirmation": {"type": "boolean"},
-        "assumptions": {"type": "array", "items": {"type": "string"}},
-        "warnings": {"type": "array", "items": {"type": "string"}},
-        "steps": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "step_id": {"type": "integer"},
-                    "action": {
-                        "type": "string",
-                        "enum": [
-                            "clean_files",
-                            "stitch_sequence",
-                            "combine_datasets",
-                            "convert_variables",
-                            "average_replicates",
-                            "plot"
-                        ]
-                    },
-                    "title": {"type": "string"},
-                    "rationale": {"type": "string"},
-                    "input_files": {"type": "array", "items": {"type": "string"}},
-                    "input_dataset_ids": {"type": "array", "items": {"type": "string"}},
-                    "output_name": {"type": "string"},
-                    "parameters": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "properties": {
-                            "dataset_name": {"type": "string"},
-                            "condition_label": {"type": "string"},
-                            "file_condition_map": {
-                                "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "additionalProperties": False,
-                                    "properties": {
-                                        "file_name": {"type": "string"},
-                                        "condition": {"type": "string"},
-                                        "dataset_label": {"type": "string"}
-                                    },
-                                    "required": ["file_name", "condition", "dataset_label"]
-                                }
-                            },
-                            "x_col": {"type": "string"},
-                            "y_col": {"type": "string"},
-                            "group_col": {"type": "string"},
-                            "condition_col": {"type": "string"},
-                            "replicate_col": {"type": "string"},
-                            "time_col": {"type": "string"},
-                            "step_variable_col": {"type": "string"},
-                            "sequence_duration_s": {"type": "number"},
-                            "sequence_regex": {"type": "string"},
-                            "convert_potential": {"type": "boolean"},
-                            "potential_col": {"type": "string"},
-                            "potential_output_col": {"type": "string"},
-                            "reference_offset_v": {"type": "number"},
-                            "ph_value": {"type": "number"},
-                            "convert_current": {"type": "boolean"},
-                            "current_col": {"type": "string"},
-                            "current_density_output_col": {"type": "string"},
-                            "electrode_area_cm2": {"type": "number"},
-                            "averaging_method": {"type": "string"},
-                            "x_grid_method": {"type": "string"},
-                            "grid_points": {"type": "integer"},
-                            "x_round_decimals": {"type": "integer"},
-                            "min_replicates": {"type": "integer"},
-                            "plot_style": {"type": "string"},
-                            "plot_type": {"type": "string"},
-                            "x_label": {"type": "string"},
-                            "y_label": {"type": "string"},
-                            "plot_title": {"type": "string"},
-                            "show_legend": {"type": "boolean"},
-                            "legend_title": {"type": "string"},
-                            "legend_location": {"type": "string"},
-                            "legend_frame": {"type": "boolean"},
-                            "use_step_axis": {"type": "boolean"},
-                            "step_axis_label": {"type": "string"},
-                            "step_axis_custom_labels": {"type": "string"},
-                            "step_axis_custom_positions": {"type": "string"}
-                        },
-                        "required": []
-                    },
-                    "review_required": {"type": "boolean"},
-                    "user_confirmation_needed": {"type": "array", "items": {"type": "string"}}
-                },
-                "required": [
-                    "step_id",
-                    "action",
-                    "title",
-                    "rationale",
-                    "input_files",
-                    "input_dataset_ids",
-                    "output_name",
-                    "parameters",
-                    "review_required",
-                    "user_confirmation_needed"
-                ]
-            }
-        },
-        "final_plot_prompt": {"type": "string"}
-    },
-    "required": [
-        "workflow_name",
-        "workflow_type",
-        "summary",
-        "requires_user_confirmation",
-        "assumptions",
-        "warnings",
-        "steps",
-        "final_plot_prompt"
-    ]
-}
-
 
 def _clean_text(value):
     if value is None:
         return ""
 
-    text = str(value).strip()
+    value = str(value).strip()
 
-    if text.lower() in {"none", "null", "n/a", "na"}:
+    if value.lower() in {"none", "null", "nan", "na", "n/a"}:
         return ""
 
-    return text
+    return value
 
 
-def _extract_output_text(response):
-    if hasattr(response, "output_text") and response.output_text:
-        return response.output_text
+def _file_name_from_summary(item):
+    if isinstance(item, str):
+        return Path(item).name
 
-    texts = []
+    if not isinstance(item, dict):
+        return ""
 
-    for item in getattr(response, "output", []) or []:
-        for content in getattr(item, "content", []) or []:
-            text = getattr(content, "text", None)
+    for key in ["file_name", "original_name", "saved_name", "name"]:
+        value = _clean_text(item.get(key))
 
-            if text:
-                texts.append(text)
+        if value:
+            return value
 
-    return "\n".join(texts).strip()
+    return ""
 
 
-def compact_file_summaries(file_summaries):
-    compact = []
+def _infer_condition(file_name):
+    lower = file_name.lower()
+
+    if "no3" in lower or "nano3" in lower or "pbsno3" in lower or "pbs+no3" in lower:
+        return "PBS+NaNO3"
+
+    if "pbs" in lower:
+        return "PBS"
+
+    return "Unknown"
+
+
+def _sequence_number(file_name):
+    stem = Path(file_name).stem
+
+    match = re.search(r"#\s*(\d+)", stem)
+
+    if match:
+        return int(match.group(1))
+
+    numbers = re.findall(r"\d+", stem)
+
+    if numbers:
+        return int(numbers[-1])
+
+    return 0
+
+
+def _sequence_prefix(file_name):
+    stem = Path(file_name).stem
+    stem = re.sub(r"\(\d+\)$", "", stem)
+    stem = re.sub(r"#\s*\d+.*$", "", stem)
+    stem = stem.strip("_- ")
+
+    return stem or Path(file_name).stem
+
+
+def _infer_dataset_label(file_name):
+    condition = _infer_condition(file_name)
+    prefix = _sequence_prefix(file_name)
+
+    if condition == "PBS":
+        return "PBS_stitched_sequence"
+
+    if condition == "PBS+NaNO3":
+        safe_prefix = re.sub(r"[^A-Za-z0-9]+", "_", prefix).strip("_")
+        return safe_prefix or "PBS_NaNO3_stitched_sequence"
+
+    return prefix or "unknown_sequence"
+
+
+def _sort_mapping_key(item):
+    name = item["file_name"]
+    condition = item["condition"]
+    lower = name.lower()
+    is_b = 1 if "chronoa_b" in lower or "_b_" in lower else 0
+
+    if condition == "PBS":
+        return (0, is_b, _sequence_number(name), name)
+
+    if condition == "PBS+NaNO3":
+        return (1, _sequence_prefix(name), _sequence_number(name), name)
+
+    return (9, name)
+
+
+def _build_mapping(file_summaries):
+    rows = []
 
     for item in file_summaries or []:
-        if isinstance(item, str):
-            item = {
-                "file_name": item,
-                "description": item
-            }
+        file_name = _file_name_from_summary(item)
 
-        if not isinstance(item, dict):
+        if not file_name:
             continue
 
-        compact.append({
-            "file_name": _clean_text(item.get("file_name") or item.get("name")),
-            "file_extension": _clean_text(item.get("file_extension") or item.get("extension")),
-            "rows": item.get("rows", 0),
-            "columns": item.get("columns", 0),
-            "column_names": item.get("column_names", []),
-            "numeric_columns": item.get("numeric_columns", []),
-            "categorical_columns": item.get("categorical_columns", []),
-            "dataset_type": _clean_text(item.get("dataset_type")),
-            "description": _clean_text(item.get("description")),
-            "preview": str(item.get("preview", ""))[:1200]
+        condition = _infer_condition(file_name)
+        dataset_label = _infer_dataset_label(file_name)
+
+        rows.append({
+            "file_name": file_name,
+            "condition": condition,
+            "dataset_label": dataset_label
         })
+
+    return sorted(rows, key=_sort_mapping_key)
+
+
+def compact_file_summaries(items):
+    compact = []
+
+    for item in items or []:
+        if isinstance(item, str):
+            compact.append({"file_name": Path(item).name})
+        elif isinstance(item, dict):
+            compact.append({
+                "file_name": item.get("file_name", ""),
+                "file_extension": item.get("file_extension", ""),
+                "rows": item.get("rows", 0),
+                "columns": item.get("columns", 0),
+                "column_names": item.get("column_names", []),
+                "dataset_type": item.get("dataset_type", "")
+            })
 
     return compact
 
 
-def normalize_file_condition_map(value):
-    if value is None:
-        return []
+def create_workflow_plan(user_request, file_summaries, current_datasets=None):
+    user_request = _clean_text(user_request)
 
-    if isinstance(value, dict):
-        value = [value]
+    if not user_request:
+        raise ValueError("Missing workflow request.")
 
-    if isinstance(value, str):
-        return [
+    file_summaries = compact_file_summaries(file_summaries)
+    mapping = _build_mapping(file_summaries)
+
+    unknown = [row["file_name"] for row in mapping if row["condition"] == "Unknown"]
+
+    warnings = []
+
+    if unknown:
+        warnings.append(
+            "Some files could not be mapped to PBS or PBS+NaNO3 by filename rules: "
+            + ", ".join(unknown[:10])
+        )
+
+    if not mapping and current_datasets:
+        warnings.append(
+            "No newly uploaded files were provided. The workflow may run on selected/current datasets if available."
+        )
+
+    return {
+        "workflow_name": "DTA chronoamperometry cleaning, stitching, and replicate averaging",
+        "workflow_type": "replicate_average_to_plot",
+        "summary": (
+            "Deterministic DTA workflow preset. It cleans raw DTA files, converts time/current/potential, "
+            "combines files with filename-based PBS/PBS+NaNO3 mapping, stitches sequential 5-minute segments, "
+            "and averages replicates by condition. It does not generate a plot."
+        ),
+        "requires_user_confirmation": True,
+        "assumptions": [
+            "Each DTA file is one local chronoamperometry segment.",
+            "PBS CHRONOA files #1-#16 followed by PBS CHRONOA_B files #1-#16 are one continuous PBS sequence.",
+            "NO3 files are stitched by numerical file index within each sequence prefix.",
+            "Current is in A unless the detected current column explicitly indicates mA.",
+            "Potential conversion uses reference_offset_v = -1 and pH = 0."
+        ],
+        "warnings": warnings,
+        "steps": [
             {
-                "file_name": value,
-                "condition": "",
-                "dataset_label": ""
+                "step_id": 1,
+                "action": "clean_files",
+                "title": "Clean raw DTA files",
+                "rationale": "Convert raw DTA uploads into cleaned CSV datasets.",
+                "input_files": [row["file_name"] for row in mapping],
+                "input_dataset_ids": [],
+                "parameters": {
+                    "dataset_name": "cleaned_dta_files",
+                    "file_condition_map": []
+                },
+                "output_name": "cleaned_dta_files",
+                "user_confirmation_needed": []
+            },
+            {
+                "step_id": 2,
+                "action": "convert_variables",
+                "title": "Convert time, current density, and potential",
+                "rationale": "Create global_time_min, j_mA_cm2, and E_RHE columns needed for combining and averaging.",
+                "input_files": [],
+                "input_dataset_ids": [],
+                "parameters": {
+                    "dataset_name": "converted_dta_files",
+                    "time_col": "",
+                    "convert_current": True,
+                    "current_col": "",
+                    "current_density_output_col": "j_mA_cm2",
+                    "electrode_area_cm2": 0.283,
+                    "convert_potential": True,
+                    "potential_col": "",
+                    "potential_output_col": "E_RHE",
+                    "reference_offset_v": -1,
+                    "ph_value": 0
+                },
+                "output_name": "converted_dta_files",
+                "user_confirmation_needed": []
+            },
+            {
+                "step_id": 3,
+                "action": "combine_datasets",
+                "title": "Combine and stitch sequential segments",
+                "rationale": (
+                    "Use deterministic filename mapping. PBS files are one stitched PBS sequence; "
+                    "NO3 files are stitched by sequence prefix and number."
+                ),
+                "input_files": [],
+                "input_dataset_ids": [],
+                "parameters": {
+                    "dataset_name": "combined_stitched_dta",
+                    "file_condition_map": mapping,
+                    "condition_col": "condition",
+                    "replicate_col": "dataset_label",
+                    "x_col": "global_time_min",
+                    "y_col": "j_mA_cm2"
+                },
+                "output_name": "combined_stitched_dta",
+                "user_confirmation_needed": [
+                    "Review the file-to-condition mapping table before execution."
+                ]
+            },
+            {
+                "step_id": 4,
+                "action": "average_replicates",
+                "title": "Average replicates by condition",
+                "rationale": "Average stitched condition curves into one final dataset for plotting.",
+                "input_files": [],
+                "input_dataset_ids": [],
+                "parameters": {
+                    "dataset_name": "final_averaged_dataset",
+                    "x_col": "global_time_min",
+                    "y_col": "j_mA_cm2",
+                    "condition_col": "condition",
+                    "replicate_col": "dataset_label",
+                    "averaging_method": "interpolate",
+                    "x_grid_method": "overlap",
+                    "grid_points": 500,
+                    "x_round_decimals": 6,
+                    "min_replicates": 1,
+                    "electrode_area_cm2": 0.283
+                },
+                "output_name": "final_averaged_dataset",
+                "user_confirmation_needed": []
             }
         ]
-
-    if not isinstance(value, list):
-        return []
-
-    normalized = []
-
-    for item in value:
-        if isinstance(item, str):
-            normalized.append({
-                "file_name": item,
-                "condition": "",
-                "dataset_label": ""
-            })
-        elif isinstance(item, dict):
-            normalized.append({
-                "file_name": _clean_text(item.get("file_name")),
-                "condition": _clean_text(item.get("condition")),
-                "dataset_label": _clean_text(item.get("dataset_label"))
-            })
-
-    return normalized
+    }
 
 
 def validate_workflow_plan(plan):
@@ -262,104 +292,26 @@ def validate_workflow_plan(plan):
             raise ValueError(f"Unsupported workflow action: {action}")
 
         step["action"] = action
-        step["title"] = _clean_text(step.get("title"))
+        step["title"] = _clean_text(step.get("title")) or action.replace("_", " ").title()
         step["rationale"] = _clean_text(step.get("rationale"))
-        step["output_name"] = _clean_text(step.get("output_name"))
-        step["input_files"] = step.get("input_files") or []
-        step["input_dataset_ids"] = step.get("input_dataset_ids") or []
-        step["parameters"] = step.get("parameters") or {}
-
-        if not isinstance(step["parameters"], dict):
-            step["parameters"] = {}
-
-        step["parameters"]["file_condition_map"] = normalize_file_condition_map(
-            step["parameters"].get("file_condition_map")
+        step["input_files"] = step.get("input_files") if isinstance(step.get("input_files"), list) else []
+        step["input_dataset_ids"] = step.get("input_dataset_ids") if isinstance(step.get("input_dataset_ids"), list) else []
+        step["parameters"] = step.get("parameters") if isinstance(step.get("parameters"), dict) else {}
+        step["output_name"] = _clean_text(step.get("output_name")) or step["title"].lower().replace(" ", "_")
+        step["user_confirmation_needed"] = (
+            step.get("user_confirmation_needed")
+            if isinstance(step.get("user_confirmation_needed"), list)
+            else []
         )
-        step["review_required"] = bool(step.get("review_required", True))
-        step["user_confirmation_needed"] = [
-            _clean_text(item)
-            for item in step.get("user_confirmation_needed", [])
-            if _clean_text(item)
-        ]
 
-    plan["workflow_name"] = _clean_text(plan.get("workflow_name")) or "AI Workflow"
-    plan["workflow_type"] = _clean_text(plan.get("workflow_type")) or "unknown"
+    plan["workflow_name"] = _clean_text(plan.get("workflow_name")) or "DTA workflow"
+    plan["workflow_type"] = _clean_text(plan.get("workflow_type")) or "replicate_average_to_plot"
     plan["summary"] = _clean_text(plan.get("summary"))
     plan["requires_user_confirmation"] = bool(plan.get("requires_user_confirmation", True))
-    plan["assumptions"] = [_clean_text(item) for item in plan.get("assumptions", []) if _clean_text(item)]
-    plan["warnings"] = [_clean_text(item) for item in plan.get("warnings", []) if _clean_text(item)]
-    plan["final_plot_prompt"] = _clean_text(plan.get("final_plot_prompt"))
+    plan["assumptions"] = plan.get("assumptions") if isinstance(plan.get("assumptions"), list) else []
+    plan["warnings"] = plan.get("warnings") if isinstance(plan.get("warnings"), list) else []
 
     return plan
-
-
-def create_workflow_plan(user_request, file_summaries, current_datasets=None):
-    if not os.getenv("OPENAI_API_KEY"):
-        raise ValueError("OPENAI_API_KEY is not set.")
-
-    user_request = _clean_text(user_request)
-
-    if not user_request:
-        raise ValueError("Missing workflow request.")
-
-    file_summaries = compact_file_summaries(file_summaries)
-    current_datasets = compact_file_summaries(current_datasets)
-
-    response = client.responses.create(
-        model=AI_WORKFLOW_MODEL,
-        instructions=(
-            "You are an AI workflow planner for a Flask app that processes electrochemical and scientific data. "
-            "Create a structured workflow plan using only the allowed actions in the schema. "
-            "Do not generate Python code, shell commands, or arbitrary transformations. "
-            "The backend will execute only approved existing functions. "
-            "Use clean_files for raw uploaded files that need cleaning. "
-            "Use stitch_sequence when multiple files belong to one time sequence. "
-            "Use convert_variables for potential and current-density conversion. "
-            "Use combine_datasets when datasets need condition and replicate labels. "
-            "Use average_replicates only after condition and replicate labels exist. "
-            "Use plot only after the required plotting columns exist. "
-            "Do not skip variable conversion when the requested downstream columns are missing. "
-            "If uploaded raw files do not contain global_time_min or j_mA_cm2, add a convert_variables step before combine_datasets and average_replicates. "
-            "If the files contain a time column such as T_s, Time_s, time_s, T, Time, or time, set time_col so the backend can create global_time_min. "
-            "If the files contain current and potential columns, set current_col and potential_col using the detected column names. "
-            "If electrode area, reference offset, or pH are not provided, still include the convert_variables step, but set requires_user_confirmation=true and list these missing values in user_confirmation_needed. "
-            "For DTA/Gamry-style data, likely candidate columns include T_s or Time_s for time, Im_A or Im for current, and Vf_V_vs_Ref, Vf, or Ewe/V for potential. "
-            "Do not assume electrode area, reference offset, pH, condition mapping, or replicate mapping unless the user provides them. "
-            "If these are unclear, set requires_user_confirmation to true and list what must be confirmed. "
-            "For averaged replicate datasets, plot y_mean grouped by condition and do not use summary mode. "
-            "For publication plots, prefer legend_frame=false and legend_location='auto' when the user asks to avoid data. "
-            "Use Matplotlib mathtext labels when appropriate, such as '$j$ / mA cm$^{-2}$', '$E$ / V vs. RHE', and '$t$ / min. "
-            "Never return the literal string 'none', 'null', or 'n/a' for visible text fields; use an empty string."
-        ),
-        input=(
-            "User request:\n"
-            f"{user_request}\n\n"
-            "Uploaded or selected file summaries:\n"
-            f"{json.dumps(file_summaries, indent=2)}\n\n"
-            "Planning rule:\n"
-            "If the target plotting/averaging columns are absent from uploaded raw files, include convert_variables before combine/average. "
-            "Do not write 'no conversion is planned' unless global_time_min and j_mA_cm2 already exist in the input selected for averaging.\n\n"
-            "Current registered dataset summaries if available:\n"
-            f"{json.dumps(current_datasets, indent=2)}"
-        ),
-        text={
-            "format": {
-                "type": "json_schema",
-                "name": "workflow_plan",
-                "schema": WORKFLOW_PLAN_SCHEMA,
-                "strict": False
-            }
-        }
-    )
-
-    output_text = _extract_output_text(response)
-
-    if not output_text:
-        raise ValueError("The AI workflow planner returned an empty response.")
-
-    plan = json.loads(output_text)
-
-    return validate_workflow_plan(plan)
 
 
 def describe_workflow_plan(plan):
@@ -368,14 +320,14 @@ def describe_workflow_plan(plan):
 
     for step in plan["steps"]:
         lines.append(f"{step['step_id']}. {step['title']} ({step['action']})")
-        lines.append(f"   {step['rationale']}")
 
-        needed = step.get("user_confirmation_needed", [])
+        if step.get("rationale"):
+            lines.append(f"   {step['rationale']}")
 
-        if needed:
-            lines.append("   Needs confirmation: " + "; ".join(needed))
+        if step.get("user_confirmation_needed"):
+            lines.append("   Needs confirmation: " + "; ".join(step["user_confirmation_needed"]))
 
-    if plan["warnings"]:
+    if plan.get("warnings"):
         lines.append("")
         lines.append("Warnings:")
 

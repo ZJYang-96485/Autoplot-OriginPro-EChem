@@ -49,9 +49,10 @@ Create a local `.env` file in the project root:
 
 ```env
 OPENAI_API_KEY=your_api_key_here
-AI_WORKFLOW_MODEL=gpt-5.5
-AI_PLOT_MODEL=gpt-5.4
-AI_MODEL=gpt-5.4
+
+AI_MODEL=gpt-5.4-mini
+AI_PLOT_MODEL=gpt-5.4-mini
+AI_WORKFLOW_MODEL=gpt-5.4-mini
 ```
 
 If you are new to the OpenAI API, go to `https://platform.openai.com` and create your own API key. You also need to set up billing or add credits in your OpenAI API account before the assistant can make requests.
