@@ -406,12 +406,6 @@
                     <div id="workflow_status" class="ai-status">
                         Upload files or select existing datasets, then describe what you want. The AI will create a workflow plan for review before anything is executed.
                     </div>
-
-                    <div class="workflow-actions">
-                        <button type="button" onclick="clearStoredUserData()">Clear Uploaded Data and Plots</button>
-                    </div>
-
-                    <p class="hint">Privacy mode: only built-in test data should remain in the dataset list. Uploaded files, processed datasets, and generated plots are temporary and are cleared after workflow execution or app restart.</p>
                 </div>
 
                 <div>
@@ -1438,30 +1432,6 @@
 
     let latestAIWorkflowPlan = null;
     let latestAIWorkflowUploads = [];
-
-
-    async function clearStoredUserData() {
-        const statusBox = document.getElementById("workflow_status");
-
-        statusBox.textContent = "Clearing uploaded data, processed data, and generated plots...";
-
-        try {
-            const response = await fetch("/api/privacy/clear-user-data", {
-                method: "POST"
-            });
-
-            const data = await response.json();
-
-            if (!response.ok || !data.ok) {
-                statusBox.textContent = data.error || "Failed to clear stored user data.";
-                return;
-            }
-
-            statusBox.textContent = "Stored user data and generated plots were cleared. Refresh the page to update the dataset list.";
-        } catch (error) {
-            statusBox.textContent = `Failed to clear stored user data: ${error.message}`;
-        }
-    }
 
     function getSelectedWorkflowDatasetIds() {
         return Array.from(document.querySelectorAll('input[name="workflow_dataset_ids"]:checked'))
