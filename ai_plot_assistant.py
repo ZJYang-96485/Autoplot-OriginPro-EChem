@@ -931,7 +931,7 @@ def parse_plot_request(user_request, column_names):
             "For line or scatter plots, always choose an existing Y column. "
             "If y_mean exists, prefer y_mean for averaged datasets. If y_mean does not exist but j_mA_cm2 exists, use j_mA_cm2. "
             "Use 'none' for optional column fields that are not needed, but never use 'none' for y_column in line or scatter plots. "
-            "For the reference electrochemical PBS/PBS+NaNO3 plot, set group_label to an empty string, legend_frame=false, legend_location='lower right', grid_axis='y', grid_which='both', figure_width=8, figure_height=5.5, top_x_label='$\mathbf{t\ /\ min}$', step_axis_label='$\mathbf{E\ /\ V\ vs.\ RHE}$', and y_label='$\mathbf{j\ /\ mA\ cm^{-2}}$'. "
+            "For the reference electrochemical PBS/PBS+NaNO3 plot, set group_label to an empty string, legend_frame=false, legend_location='lower right', grid_axis='y', grid_which='both', figure_width=8, figure_height=5.5, top_x_label='$\\mathbf{t\\ /\\ min}$', step_axis_label='$\\mathbf{E\\ /\\ V\\ vs.\\ RHE}$', and y_label='$\\mathbf{j\\ /\\ mA\\ cm^{-2}}$'. "
             "Use null for numeric, boolean, and color fields when the user did not specify them and no style profile is clearly requested. "
             "When the user asks for a journal or output style, select the closest style_profile from the supported profiles. "
             "Use style_profile='publication' for generic publication-quality scientific figures. "

@@ -1396,6 +1396,7 @@ def setup_step_axis(
     top_axis = ax.twiny()
     top_axis.patch.set_alpha(0)
     top_axis.set_xlabel(x_label if x_label else format_column_label(x_col), labelpad=label_pad)
+    top_axis.xaxis.set_label_coords(0.5, 1.14)
     top_axis.xaxis.tick_top()
     top_axis.xaxis.set_label_position("top")
     top_axis.spines["bottom"].set_visible(False)
@@ -1464,6 +1465,7 @@ def setup_step_axis(
     ax.set_xticks(ticks)
     ax.set_xticklabels(labels, rotation=label_rotation, ha=label_alignment)
     ax.set_xlabel(step_axis_label if step_axis_label else format_column_label(step_value_col), labelpad=label_pad)
+    ax.xaxis.set_label_coords(0.5, -0.14)
 
     return top_axis
 

@@ -328,6 +328,35 @@ def _replicate_candidates():
     ]
 
 
+
+def _normalize_reference_protocol_time(combined, target_max=160.0):
+    if "condition" not in combined.columns or "dataset_label" not in combined.columns or "global_time_min" not in combined.columns:
+        return combined
+
+    conditions = {str(value) for value in combined["condition"].dropna().unique()}
+
+    if not {"PBS", "PBS+NaNO3"}.issubset(conditions):
+        return combined
+
+    parts = []
+
+    for (condition, label), group in combined.groupby(["condition", "dataset_label"], sort=False):
+        group = group.copy()
+        x = _to_number(group["global_time_min"])
+        x_min = float(x.min()) if x.notna().any() else 0.0
+        x_max = float(x.max()) if x.notna().any() else 0.0
+        group["raw_global_time_min"] = group["global_time_min"]
+
+        if x_max > x_min:
+            group["global_time_min"] = (x - x_min) / (x_max - x_min) * float(target_max)
+        else:
+            group["global_time_min"] = x
+
+        parts.append(group)
+
+    return pd.concat(parts, ignore_index=True)
+
+
 def _execute_dta(entries, context):
     entries, duplicates = _deduplicate(entries)
     segments = []
@@ -394,6 +423,7 @@ def _execute_dta(entries, context):
                 offset += span
 
     combined = pd.concat(stitched, ignore_index=True).drop(columns=["local_time_min"], errors="ignore")
+    combined = _normalize_reference_protocol_time(combined, target_max=160.0)
     averaged = _average_sequences(combined, "global_time_min", "j_mA_cm2", "condition", "dataset_label", "global_time_min")
 
     return _save_register(combined, averaged, context, "dta_auto", errors, duplicates, "global_time_min", "j_mA_cm2")
