@@ -398,6 +398,13 @@ def _summarize_condition_ranges(df, x_col="global_time_min", y_col="j_mA_cm2"):
         x = _to_number(group[x_col]).dropna()
         y = _to_number(group[y_col]).dropna()
 
+        if "dataset_label" in group.columns:
+            labels = sorted(group["dataset_label"].dropna().astype(str).unique().tolist())
+        elif "replicate_names" in group.columns:
+            labels = sorted(group["replicate_names"].dropna().astype(str).unique().tolist())
+        else:
+            labels = []
+
         summaries.append({
             "condition": str(condition),
             "rows": int(len(group)),
@@ -405,7 +412,7 @@ def _summarize_condition_ranges(df, x_col="global_time_min", y_col="j_mA_cm2"):
             "x_max": float(x.max()) if not x.empty else None,
             "y_min": float(y.min()) if not y.empty else None,
             "y_max": float(y.max()) if not y.empty else None,
-            "dataset_labels": sorted(group["dataset_label"].dropna().astype(str).unique().tolist())
+            "dataset_labels": labels
         })
 
     return summaries
