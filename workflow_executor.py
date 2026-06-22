@@ -820,6 +820,137 @@ def _stitch_local_time_to_global_time(
 
 
 
+
+def _first_existing_column(columns, candidates):
+    lookup = {str(column).strip().lower(): column for column in columns}
+
+    for candidate in candidates:
+        candidate = str(candidate).strip().lower()
+
+        if candidate in lookup:
+            return lookup[candidate]
+
+    for column in columns:
+        lower = str(column).strip().lower()
+
+        for candidate in candidates:
+            candidate = str(candidate).strip().lower()
+
+            if candidate and candidate in lower:
+                return column
+
+    return ""
+
+
+def _ensure_average_input_columns(
+    csv_path,
+    x_col,
+    y_col,
+    condition_col,
+    replicate_col,
+    electrode_area_cm2=0.283
+):
+    csv_path = Path(csv_path)
+    df = pd.read_csv(csv_path)
+
+    if df.empty:
+        raise ValueError(f"Averaging input is empty: {csv_path}")
+
+    columns = list(df.columns)
+    changed = False
+    created_columns = []
+
+    if x_col not in df.columns:
+        source_time_col = _first_existing_column(
+            columns,
+            ["global_time_min", "local_time_min", "time_min", "t_min", "T_min", "time_s", "t_s", "T_s", "Time/s", "Time"]
+        )
+
+        if source_time_col:
+            time_values = pd.to_numeric(df[source_time_col], errors="coerce")
+            lower = str(source_time_col).lower()
+
+            if "min" in lower:
+                df[x_col] = time_values
+            else:
+                df[x_col] = time_values / 60.0
+
+            changed = True
+            created_columns.append(x_col)
+
+    if y_col not in df.columns:
+        source_y_col = _first_existing_column(
+            columns,
+            [
+                "j_mA_cm2",
+                "current_density_mA_cm2",
+                "current_density",
+                "j_A_cm2",
+                "Im_A",
+                "I_A",
+                "Current_A",
+                "current_A",
+                "Current",
+                "I",
+                "Im"
+            ]
+        )
+
+        if source_y_col:
+            values = pd.to_numeric(df[source_y_col], errors="coerce")
+            lower = str(source_y_col).lower()
+
+            if source_y_col == "j_A_cm2" or ("a_cm2" in lower and "ma" not in lower):
+                df[y_col] = values * 1000.0
+            elif "density" in lower or "j_" in lower or "ma_cm2" in lower or "ma cm" in lower:
+                df[y_col] = values
+            elif "ma" in lower and "/a" not in lower:
+                df[y_col] = values / electrode_area_cm2
+            else:
+                df[y_col] = values * 1000.0 / electrode_area_cm2
+
+            changed = True
+            created_columns.append(y_col)
+
+    if condition_col not in df.columns:
+        raise ValueError(
+            f"Condition column not found: {condition_col}. "
+            f"Available columns: {', '.join(map(str, df.columns))}"
+        )
+
+    if replicate_col not in df.columns:
+        if "source_dataset_label" in df.columns:
+            df[replicate_col] = df["source_dataset_label"].astype(str)
+            changed = True
+            created_columns.append(replicate_col)
+        else:
+            df[replicate_col] = df[condition_col].astype(str)
+            changed = True
+            created_columns.append(replicate_col)
+
+    if x_col not in df.columns:
+        raise ValueError(
+            f"X column not found: {x_col}. "
+            f"Available columns: {', '.join(map(str, df.columns))}"
+        )
+
+    if y_col not in df.columns:
+        raise ValueError(
+            f"Y column not found: {y_col}. "
+            f"Available columns: {', '.join(map(str, df.columns))}"
+        )
+
+    if changed:
+        df.to_csv(csv_path, index=False)
+
+    return {
+        "checked": True,
+        "changed": changed,
+        "created_columns": created_columns,
+        "available_columns": list(df.columns)
+    }
+
+
 def _plot_defaults(params, dataset_id):
     return {
         "dataset_id": dataset_id,
@@ -1019,13 +1150,17 @@ def execute_workflow_plan(plan, context):
                 if dataset is None:
                     continue
 
-                convert_potential = _bool(params.get("convert_potential"), bool(_text(params.get("potential_col"))))
-                convert_current = _bool(params.get("convert_current"), bool(_text(params.get("current_col"))))
+                electrode_area_cm2 = _float(params.get("electrode_area_cm2"), 0.283)
+
+                convert_potential = _bool(params.get("convert_potential"), True)
+                convert_current = _bool(params.get("convert_current"), True)
+
+                if electrode_area_cm2 > 0:
+                    convert_current = True
 
                 if not convert_potential and not convert_current:
-                    raise ValueError("Variable conversion requires at least one enabled conversion.")
-
-                electrode_area_cm2 = _float(params.get("electrode_area_cm2"), 0)
+                    convert_potential = True
+                    convert_current = True
 
                 if convert_current and electrode_area_cm2 <= 0:
                     raise ValueError(
@@ -1049,12 +1184,12 @@ def execute_workflow_plan(plan, context):
                     output_path=output_path,
                     convert_potential=convert_potential,
                     potential_col=potential_col,
-                    potential_output_col=_text(params.get("potential_output_col")) or "E_RHE",
+                    potential_output_col="E_RHE",
                     reference_offset_v=_float(params.get("reference_offset_v"), 0),
                     ph_value=_float(params.get("ph_value"), 0),
                     convert_current=convert_current,
                     current_col=current_col,
-                    current_density_output_col=_text(params.get("current_density_output_col")) or "j_mA_cm2",
+                    current_density_output_col="j_mA_cm2",
                     electrode_area_cm2=electrode_area_cm2,
                     time_col=time_col
                 )
@@ -1166,19 +1301,32 @@ def execute_workflow_plan(plan, context):
                 raise ValueError("Selected averaging dataset was not found.")
 
             output_path = _output_path(processed_dir, output_name, "averaged")
+            x_col = _text(params.get("x_col")) or "global_time_min"
+            y_col = _text(params.get("y_col")) or "j_mA_cm2"
+            condition_col = _text(params.get("condition_col")) or "condition"
+            replicate_col = _text(params.get("replicate_col")) or "dataset_label"
+            column_check = _ensure_average_input_columns(
+                csv_path=Path(dataset["file_path"]),
+                x_col=x_col,
+                y_col=y_col,
+                condition_col=condition_col,
+                replicate_col=replicate_col,
+                electrode_area_cm2=_float(params.get("electrode_area_cm2"), 0.283)
+            )
             result = average_condition_replicates(
                 input_path=Path(dataset["file_path"]),
                 output_path=output_path,
-                x_col=_text(params.get("x_col")) or "global_time_min",
-                y_col=_text(params.get("y_col")) or "j_mA_cm2",
-                condition_col=_text(params.get("condition_col")) or "condition",
-                replicate_col=_text(params.get("replicate_col")) or "dataset_label",
+                x_col=x_col,
+                y_col=y_col,
+                condition_col=condition_col,
+                replicate_col=replicate_col,
                 method=_normalize_averaging_method(params.get("averaging_method")),
                 x_grid_method=_normalize_x_grid_method(params.get("x_grid_method")),
                 grid_points=_int(params.get("grid_points"), 500),
                 x_round_decimals=_int(params.get("x_round_decimals"), 6),
                 min_replicates=_int(params.get("min_replicates"), 1)
             )
+            result["column_check"] = column_check
             registered = state["register_dataset"](
                 file_path=output_path,
                 dataset_type="averaged_replicates",
