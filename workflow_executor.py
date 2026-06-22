@@ -175,9 +175,7 @@ def _sequence_number(file_name):
     if match:
         return int(match.group(1))
 
-    numbers = re.findall(r"\d+", stem)
-
-    return int(numbers[-1]) if numbers else 0
+    return 0
 
 
 def _is_b_sequence(file_name):
@@ -219,6 +217,9 @@ def _dataset_label(file_name):
 
     if condition == "PBS":
         return "PBS_stitched_sequence"
+
+    if condition == "PBS+NaNO3":
+        return "PBS_NaNO3_stitched_sequence"
 
     prefix = re.sub(r"[^A-Za-z0-9]+", "_", _sequence_prefix(file_name)).strip("_")
 
@@ -459,6 +460,9 @@ def _execute_dta(entries, context):
 
     result = _save_register(combined, averaged, context, "dta_auto", errors, duplicates, "global_time_min", "j_mA_cm2")
     result["step_results"][0]["repeated_sequence_report"] = repeated_sequences
+    result["step_results"][0]["filename_parsing_audit"] = _filename_parsing_audit(entries)
+    result["step_results"][0]["processed_file_audit"] = _processed_file_audit(combined)
+    result["step_results"][0]["condition_file_coverage_audit"] = _condition_file_coverage_audit(combined)
     return result
 
 
@@ -614,6 +618,135 @@ def _ranges(df, x_col, y_col):
 
     return out
 
+
+
+
+
+def _filename_parsing_audit(entries):
+    rows = []
+
+    for entry in entries:
+        name = entry["original_name"]
+        rows.append({
+            "source_file": name,
+            "condition": _infer_condition(name),
+            "dataset_label": _dataset_label(name),
+            "sequence_prefix": _sequence_prefix(name),
+            "sequence_number": int(_sequence_number(name)),
+            "is_b_sequence": bool(_is_b_sequence(name)),
+            "copy_index": int(_copy_index(name)),
+            "extension": entry["extension"],
+            "note": (
+                "sequence_number is parsed only from #N; numbers in layer count or rpm are ignored. "
+                "PBS and PBS+NaNO3 are each merged into one stitched sequence label."
+            )
+        })
+
+    return sorted(
+        rows,
+        key=lambda row: (
+            row["condition"],
+            row["dataset_label"],
+            row["is_b_sequence"],
+            row["copy_index"],
+            row["sequence_number"],
+            row["source_file"]
+        )
+    )
+
+def _processed_file_audit(combined):
+    required = {"condition", "dataset_label", "source_file", "sequence_number", "copy_index", "is_b_sequence", "global_time_min"}
+
+    if not required.issubset(set(combined.columns)):
+        return []
+
+    audit_rows = []
+
+    for source_file, group in combined.groupby("source_file", sort=False):
+        x = _to_number(group["global_time_min"]).dropna()
+        row = group.iloc[0]
+
+        audit_rows.append({
+            "source_file": str(source_file),
+            "condition": str(row["condition"]),
+            "dataset_label": str(row["dataset_label"]),
+            "is_b_sequence": bool(row["is_b_sequence"]),
+            "copy_index": int(row["copy_index"]),
+            "sequence_number": int(row["sequence_number"]),
+            "global_time_start": float(x.min()) if not x.empty else None,
+            "global_time_end": float(x.max()) if not x.empty else None,
+            "n_rows": int(len(group))
+        })
+
+    return sorted(
+        audit_rows,
+        key=lambda row: (
+            row["condition"],
+            row["dataset_label"],
+            row["is_b_sequence"],
+            row["copy_index"],
+            row["sequence_number"],
+            row["source_file"]
+        )
+    )
+
+
+def _condition_file_coverage_audit(combined):
+    file_audit = _processed_file_audit(combined)
+    output = []
+
+    if not file_audit:
+        return output
+
+    for condition in sorted({row["condition"] for row in file_audit}):
+        rows = [row for row in file_audit if row["condition"] == condition]
+        seqs = sorted({row["sequence_number"] for row in rows})
+        copies = sorted({row["copy_index"] for row in rows})
+        b_values = sorted({row["is_b_sequence"] for row in rows})
+        max_seq = max(seqs) if seqs else 0
+        missing_by_copy_and_b = []
+
+        for is_b in b_values:
+            for copy_index in copies:
+                present = sorted(
+                    row["sequence_number"]
+                    for row in rows
+                    if row["is_b_sequence"] == is_b and row["copy_index"] == copy_index
+                )
+
+                if not present:
+                    continue
+
+                expected = list(range(min(present), max(present) + 1))
+                missing = [value for value in expected if value not in present]
+
+                if missing:
+                    missing_by_copy_and_b.append({
+                        "is_b_sequence": bool(is_b),
+                        "copy_index": int(copy_index),
+                        "present_min": int(min(present)),
+                        "present_max": int(max(present)),
+                        "missing_sequence_numbers": missing
+                    })
+
+        output.append({
+            "condition": condition,
+            "n_source_files_processed": int(len(rows)),
+            "sequence_numbers_present": seqs,
+            "copy_indices_present": copies,
+            "has_b_sequence": any(b_values),
+            "first_files": [row["source_file"] for row in rows[:8]],
+            "last_files": [row["source_file"] for row in rows[-8:]],
+            "global_time_start": min(row["global_time_start"] for row in rows if row["global_time_start"] is not None),
+            "global_time_end": max(row["global_time_end"] for row in rows if row["global_time_end"] is not None),
+            "missing_sequence_report": missing_by_copy_and_b,
+            "interpretation": (
+                "A 0-160 min reference plot requires enough sequential source files to cover that range. "
+                "If this condition only has about 16 five-minute files, coverage will be about 80 min."
+            )
+        })
+
+    return output
 
 
 def _protocol_coverage_summary(df, x_col="global_time_min", condition_col="condition", expected_min=0.0, expected_max=160.0):
