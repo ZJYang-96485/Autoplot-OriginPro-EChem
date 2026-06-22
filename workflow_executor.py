@@ -2,6 +2,7 @@
 from pathlib import Path
 from datetime import datetime
 import re
+import hashlib
 import pandas as pd
 import numpy as np
 
@@ -23,6 +24,9 @@ def _text(value):
 
 
 def _to_number(value):
+    if isinstance(value, pd.DataFrame):
+        value = value.iloc[:, 0]
+
     if isinstance(value, pd.Series):
         cleaned = (
             value.astype(str)
@@ -36,11 +40,512 @@ def _to_number(value):
     return pd.to_numeric(str(value).strip().replace("\u2212", "-").replace(",", "."), errors="coerce")
 
 
-def _safe_file_stem(value):
-    value = Path(str(value)).stem
-    value = re.sub(r"\(\d+\)$", "", value)
-    value = re.sub(r"[^A-Za-z0-9_.#()+-]+", "_", value)
-    return value.strip("_") or "dataset"
+def _uploaded_entries(context):
+    entries = []
+
+    for item in context.get("uploaded_files", []) or []:
+        if not isinstance(item, dict):
+            continue
+
+        saved_path = _text(item.get("saved_path"))
+
+        if not saved_path:
+            continue
+
+        path = Path(saved_path)
+
+        if not path.exists():
+            continue
+
+        entries.append({
+            "original_name": _text(item.get("original_name")) or path.name,
+            "path": path,
+            "extension": path.suffix.lower().lstrip("."),
+            "content_hash": _content_hash(path)
+        })
+
+    return entries
+
+
+def _content_hash(path):
+    hasher = hashlib.sha256()
+
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            hasher.update(chunk)
+
+    return hasher.hexdigest()
+
+
+def _read_table_headerless(path, nrows=None):
+    path = Path(path)
+    extension = path.suffix.lower().lstrip(".")
+
+    if extension in {"xlsx", "xls"}:
+        return pd.read_excel(path, header=None, nrows=nrows)
+
+    attempts = [
+        {"sep": None, "engine": "python"},
+        {"sep": ","},
+        {"sep": ";"},
+        {"sep": "\t"},
+        {"sep": r"\s+", "engine": "python"}
+    ]
+    last_error = None
+
+    for kwargs in attempts:
+        try:
+            df = pd.read_csv(path, header=None, nrows=nrows, **kwargs)
+
+            if df.shape[1] >= 2:
+                return df
+
+        except Exception as error:
+            last_error = error
+
+    raise ValueError(f"Could not read table {path.name}: {last_error}")
+
+
+def _read_table_with_header(path):
+    path = Path(path)
+    extension = path.suffix.lower().lstrip(".")
+
+    if extension in {"xlsx", "xls"}:
+        return pd.read_excel(path)
+
+    attempts = [
+        {"sep": None, "engine": "python"},
+        {"sep": ","},
+        {"sep": ";"},
+        {"sep": "\t"},
+        {"sep": r"\s+", "engine": "python"}
+    ]
+    last_error = None
+
+    for kwargs in attempts:
+        try:
+            df = pd.read_csv(path, **kwargs)
+
+            if df.shape[1] >= 2:
+                return df
+
+        except Exception as error:
+            last_error = error
+
+    raise ValueError(f"Could not read table {path.name}: {last_error}")
+
+
+def _has_dta_curve(path):
+    try:
+        with open(path, "r", errors="ignore") as handle:
+            for line in handle:
+                if line.startswith("CURVE"):
+                    return True
+    except Exception:
+        return False
+
+    return False
+
+
+def _read_dta_curve(path):
+    path = Path(path)
+    lines = path.read_text(errors="ignore").splitlines()
+    curve_index = None
+
+    for index, line in enumerate(lines):
+        if line.startswith("CURVE"):
+            curve_index = index
+            break
+
+    if curve_index is None or curve_index + 2 >= len(lines):
+        raise ValueError(f"No CURVE table found in {path.name}")
+
+    headers = [item.strip() for item in lines[curve_index + 1].split("\t")[1:] if item.strip()]
+    rows = []
+
+    for line in lines[curve_index + 3:]:
+        if not line.strip():
+            continue
+
+        parts = line.split("\t")
+
+        if len(parts) < len(headers) + 1:
+            continue
+
+        rows.append(parts[1:1 + len(headers)])
+
+    if not rows:
+        raise ValueError(f"No curve rows found in {path.name}")
+
+    df = pd.DataFrame(rows, columns=headers)
+
+    for column in df.columns:
+        df[column] = _to_number(df[column])
+
+    return df
+
+
+def _token(value):
+    return str(value).strip().lower()
+
+
+def _looks_like_x_header(value):
+    text = _token(value)
+
+    if not text:
+        return False
+
+    terms = [
+        "wavelength",
+        "wave length",
+        "nm",
+        "time",
+        "potential",
+        "voltage",
+        "frequency",
+        "freq",
+        "energy",
+        "x"
+    ]
+
+    return any(term in text for term in terms)
+
+
+def _looks_like_y_header(value):
+    text = _token(value)
+
+    if not text:
+        return False
+
+    terms = [
+        "abs",
+        "absorbance",
+        "current",
+        "intensity",
+        "signal",
+        "response",
+        "counts",
+        "transmittance",
+        "reflectance",
+        "y"
+    ]
+
+    return any(term in text for term in terms)
+
+
+def _detect_wide_pair_table(path):
+    try:
+        raw = _read_table_headerless(path, nrows=8)
+    except Exception:
+        return None
+
+    if raw.shape[0] < 3 or raw.shape[1] < 2:
+        return None
+
+    best = None
+
+    for condition_row_index in range(min(4, raw.shape[0] - 1)):
+        variable_row_index = condition_row_index + 1
+        pairs = []
+        column = 0
+
+        while column < raw.shape[1] - 1:
+            condition = _text(raw.iloc[condition_row_index, column])
+            x_header = _text(raw.iloc[variable_row_index, column])
+            y_header = _text(raw.iloc[variable_row_index, column + 1])
+
+            if condition and _looks_like_x_header(x_header) and _looks_like_y_header(y_header):
+                pairs.append({
+                    "condition": condition,
+                    "x_col_index": column,
+                    "y_col_index": column + 1,
+                    "x_header": x_header,
+                    "y_header": y_header
+                })
+                column += 2
+                continue
+
+            column += 1
+
+        if len(pairs) >= 2:
+            score = len(pairs)
+            current = {
+                "parser": "wide_pair_table",
+                "condition_row_index": condition_row_index,
+                "variable_row_index": variable_row_index,
+                "data_start_row": variable_row_index + 1,
+                "pairs": pairs,
+                "confidence": "high" if len(pairs) >= 3 else "medium",
+                "score": score
+            }
+
+            if best is None or current["score"] > best["score"]:
+                best = current
+
+    return best
+
+
+def _find_column(columns, candidates, df=None, min_numeric=2):
+    direct = {str(column).strip().lower(): column for column in columns}
+
+    for candidate in candidates:
+        key = str(candidate).lower()
+
+        if key in direct:
+            column = direct[key]
+
+            if df is None or _to_number(df[column]).notna().sum() >= min_numeric:
+                return column
+
+    for column in columns:
+        lower = str(column).strip().lower()
+
+        for candidate in candidates:
+            if str(candidate).lower() in lower:
+                if df is None or _to_number(df[column]).notna().sum() >= min_numeric:
+                    return column
+
+    return ""
+
+
+def _detect_long_table(path):
+    try:
+        df = _read_table_with_header(path)
+    except Exception:
+        return None
+
+    if df.shape[1] < 2:
+        return None
+
+    x_col = _find_column(
+        df.columns,
+        ["wavelength_nm", "wavelength", "lambda", "time_min", "time", "t", "potential", "voltage", "E_RHE", "Vf", "frequency", "x"],
+        df
+    )
+    y_col = _find_column(
+        df.columns,
+        ["absorbance", "abs", "y_mean", "j_mA_cm2", "current_density", "current", "Im", "I", "intensity", "signal", "response", "y"],
+        df
+    )
+    condition_col = _find_column(
+        df.columns,
+        ["condition", "group", "sample", "label", "treatment", "electrolyte", "catalyst"],
+        None
+    )
+
+    if not x_col or not y_col:
+        return None
+
+    return {
+        "parser": "long_table",
+        "x_col": str(x_col),
+        "y_col": str(y_col),
+        "condition_col": str(condition_col) if condition_col else "",
+        "confidence": "high" if condition_col else "medium"
+    }
+
+
+def _classify_entry(entry):
+    path = entry["path"]
+    extension = entry["extension"]
+
+    if extension == "dta" and _has_dta_curve(path):
+        return {
+            "parser": "gamry_dta_curve",
+            "confidence": "high",
+            "reason": "DTA file contains a CURVE table."
+        }
+
+    if extension in {"csv", "txt", "tsv", "dat", "xlsx", "xls"}:
+        wide = _detect_wide_pair_table(path)
+
+        if wide is not None:
+            return wide
+
+        long_table = _detect_long_table(path)
+
+        if long_table is not None:
+            return long_table
+
+    return {
+        "parser": "inspect_only",
+        "confidence": "low",
+        "reason": "No supported data shape was detected."
+    }
+
+
+def _inspect_entry(entry):
+    report = {
+        "file_name": entry["original_name"],
+        "extension": entry["extension"],
+        "content_hash": entry["content_hash"][:16],
+        "readable": False,
+        "rows": 0,
+        "columns": 0,
+        "preview": [],
+        "classification": None,
+        "error": ""
+    }
+
+    try:
+        if entry["extension"] == "dta" and _has_dta_curve(entry["path"]):
+            df = _read_dta_curve(entry["path"])
+        else:
+            df = _read_table_headerless(entry["path"], nrows=8)
+
+        report["readable"] = True
+        report["rows"] = int(len(df))
+        report["columns"] = int(len(df.columns))
+        report["preview"] = df.head(5).astype(str).values.tolist()
+        report["classification"] = _classify_entry(entry)
+    except Exception as error:
+        report["classification"] = _classify_entry(entry)
+        report["error"] = str(error)
+
+    return report
+
+
+def _output_x_name(x_header):
+    text = _token(x_header)
+
+    if "wavelength" in text or "nm" in text:
+        return "wavelength_nm"
+
+    if "time" in text and "min" in text:
+        return "time_min"
+
+    if "time" in text:
+        return "time"
+
+    if "potential" in text or "voltage" in text or text in {"e", "vf"}:
+        return "potential"
+
+    if "frequency" in text or "freq" in text:
+        return "frequency"
+
+    return "x_value"
+
+
+def _output_y_name(y_header):
+    text = _token(y_header)
+
+    if text == "abs" or "absorbance" in text:
+        return "absorbance"
+
+    if "current" in text:
+        return "current"
+
+    if "intensity" in text:
+        return "intensity"
+
+    if "signal" in text:
+        return "signal"
+
+    if "response" in text:
+        return "response"
+
+    return "y_value"
+
+
+def _parse_wide_pair_table(entry, classification):
+    raw = _read_table_headerless(entry["path"])
+    data_start = classification["data_start_row"]
+    rows = []
+    diagnostics = []
+
+    for pair in classification["pairs"]:
+        condition = pair["condition"]
+        x_header = pair["x_header"]
+        y_header = pair["y_header"]
+        x_col_index = pair["x_col_index"]
+        y_col_index = pair["y_col_index"]
+        x_name = _output_x_name(x_header)
+        y_name = _output_y_name(y_header)
+        x = _to_number(raw.iloc[data_start:, x_col_index])
+        y = _to_number(raw.iloc[data_start:, y_col_index])
+        temp = pd.DataFrame({
+            "condition": condition,
+            x_name: x,
+            y_name: y,
+            "x_value": x,
+            "y_value": y,
+            "source_file": entry["original_name"],
+            "source_x_col": f"{condition}::{x_header}",
+            "source_y_col": f"{condition}::{y_header}",
+            "dataset_label": condition
+        }).dropna(subset=["x_value", "y_value"])
+
+        if y_name == "absorbance":
+            temp["saturated_or_clipped"] = temp[y_name] >= 9.99
+
+        if not temp.empty:
+            rows.append(temp.sort_values("x_value"))
+
+        diagnostics.append({
+            "condition": condition,
+            "x_header": x_header,
+            "y_header": y_header,
+            "rows": int(len(temp)),
+            "output_x_column": x_name,
+            "output_y_column": y_name
+        })
+
+    if not rows:
+        raise ValueError(f"{entry['original_name']}: no valid wide-pair data rows were parsed.")
+
+    combined = pd.concat(rows, ignore_index=True)
+    x_candidates = [column for column in ["wavelength_nm", "time_min", "time", "potential", "frequency", "x_value"] if column in combined.columns]
+    y_candidates = [column for column in ["absorbance", "current", "intensity", "signal", "response", "y_value"] if column in combined.columns]
+
+    return combined, {
+        "parser": "wide_pair_table",
+        "x_column": x_candidates[0] if x_candidates else "x_value",
+        "y_column": y_candidates[0] if y_candidates else "y_value",
+        "group_column": "condition",
+        "diagnostics": diagnostics
+    }
+
+
+def _parse_long_table(entry, classification):
+    df = _read_table_with_header(entry["path"])
+    x_col = classification["x_col"]
+    y_col = classification["y_col"]
+    condition_col = classification.get("condition_col") or ""
+    condition = df[condition_col].astype(str) if condition_col and condition_col in df.columns else Path(entry["original_name"]).stem
+    x = _to_number(df[x_col])
+    y = _to_number(df[y_col])
+    x_name = _output_x_name(x_col)
+    y_name = _output_y_name(y_col)
+
+    out = pd.DataFrame({
+        "condition": condition,
+        x_name: x,
+        y_name: y,
+        "x_value": x,
+        "y_value": y,
+        "source_file": entry["original_name"],
+        "source_x_col": x_col,
+        "source_y_col": y_col,
+        "dataset_label": condition
+    }).dropna(subset=["x_value", "y_value"])
+
+    if y_name == "absorbance":
+        out["saturated_or_clipped"] = out[y_name] >= 9.99
+
+    if out.empty:
+        raise ValueError(f"{entry['original_name']}: no valid long-table numeric rows were parsed.")
+
+    return out.sort_values(["condition", "x_value"]), {
+        "parser": "long_table",
+        "x_column": x_name,
+        "y_column": y_name,
+        "group_column": "condition",
+        "diagnostics": [{
+            "x_header": x_col,
+            "y_header": y_col,
+            "condition_header": condition_col
+        }]
+    }
 
 
 def _infer_condition(file_name):
@@ -52,7 +557,7 @@ def _infer_condition(file_name):
     if "pbs" in lower:
         return "PBS"
 
-    return "Unknown"
+    return Path(str(file_name)).stem
 
 
 def _sequence_number(file_name):
@@ -61,11 +566,6 @@ def _sequence_number(file_name):
 
     if match:
         return int(match.group(1))
-
-    numbers = re.findall(r"\d+", stem)
-
-    if numbers:
-        return int(numbers[-1])
 
     return 0
 
@@ -79,18 +579,9 @@ def _sequence_prefix(file_name):
     stem = Path(str(file_name)).stem
     stem = re.sub(r"\(\d+\)$", "", stem)
     stem = re.sub(r"#\s*\d+.*$", "", stem)
+    stem = re.sub(r"CHRONOA[_-]*B$", "CHRONOA", stem, flags=re.IGNORECASE)
     stem = stem.strip("_- ")
     return stem or Path(str(file_name)).stem
-
-
-def _normalized_ab_prefix(file_name):
-    prefix = _sequence_prefix(file_name)
-    prefix = re.sub(r"CHRONOA[_-]*B$", "CHRONOA", prefix, flags=re.IGNORECASE)
-    prefix = re.sub(r"CHRONOA[_-]*B[_-]*$", "CHRONOA", prefix, flags=re.IGNORECASE)
-    prefix = prefix.replace("CHRONOA_B", "CHRONOA")
-    prefix = prefix.replace("chronoa_b", "chronoa")
-    prefix = prefix.strip("_- ")
-    return prefix
 
 
 def _dataset_label(file_name):
@@ -100,187 +591,64 @@ def _dataset_label(file_name):
         return "PBS_stitched_sequence"
 
     if condition == "PBS+NaNO3":
-        prefix = _normalized_ab_prefix(file_name)
-        prefix = re.sub(r"[^A-Za-z0-9]+", "_", prefix).strip("_")
+        prefix = re.sub(r"[^A-Za-z0-9]+", "_", _sequence_prefix(file_name)).strip("_")
         return prefix or "PBS_NaNO3_stitched_sequence"
 
-    return _normalized_ab_prefix(file_name)
+    return _sequence_prefix(file_name)
 
 
-def _read_dta_curve(path):
-    path = Path(path)
-    lines = path.read_text(errors="ignore").splitlines()
-
-    curve_index = None
-
-    for index, line in enumerate(lines):
-        if line.startswith("CURVE"):
-            curve_index = index
-            break
-
-    if curve_index is None or curve_index + 2 >= len(lines):
-        raise ValueError(f"No CURVE table found in {path.name}")
-
-    header_parts = lines[curve_index + 1].split("\t")
-    headers = [item.strip() for item in header_parts[1:] if item.strip()]
-
-    rows = []
-
-    for line in lines[curve_index + 3:]:
-        if not line.strip():
-            continue
-
-        parts = line.split("\t")
-
-        if len(parts) < len(headers) + 1:
-            continue
-
-        values = parts[1:1 + len(headers)]
-        rows.append(values)
-
-    if not rows:
-        raise ValueError(f"No curve rows found in {path.name}")
-
-    df = pd.DataFrame(rows, columns=headers)
-
-    for column in df.columns:
-        df[column] = _to_number(df[column])
-
-    return df
-
-
-def _select_column(columns, candidates):
-    lower_map = {str(column).strip().lower(): column for column in columns}
-
-    for candidate in candidates:
-        if candidate.lower() in lower_map:
-            return lower_map[candidate.lower()]
-
-    for column in columns:
-        lower = str(column).strip().lower()
-
-        for candidate in candidates:
-            if candidate.lower() in lower:
-                return column
-
-    return ""
-
-
-def _load_segment(path, original_name, electrode_area_cm2, reference_offset_v, ph_value):
-    raw = _read_dta_curve(path)
+def _parse_dta_entry(entry, electrode_area_cm2=0.283, reference_offset_v=-1.0, ph_value=0.0):
+    raw = _read_dta_curve(entry["path"])
     columns = list(raw.columns)
+    time_col = _find_column(columns, ["T", "Time", "time_s", "T_s"], raw)
+    potential_col = _find_column(columns, ["Vf", "E", "Potential", "V"], raw)
+    current_col = _find_column(columns, ["Im", "I", "Current", "current_A"], raw)
 
-    time_col = _select_column(columns, ["T", "Time", "time_s", "T_s"])
-    potential_col = _select_column(columns, ["Vf", "E", "Potential", "V"])
-    current_col = _select_column(columns, ["Im", "I", "Current", "current_A"])
-
-    if not time_col:
-        raise ValueError(f"No time column found in {original_name}. Available columns: {columns}")
-
-    if not current_col:
-        raise ValueError(f"No current column found in {original_name}. Available columns: {columns}")
-
-    if not potential_col:
-        raise ValueError(f"No potential column found in {original_name}. Available columns: {columns}")
+    if not time_col or not potential_col or not current_col:
+        raise ValueError(f"{entry['original_name']}: could not find time, potential, and current columns. Columns: {columns}")
 
     time_values = _to_number(raw[time_col])
     current_values = _to_number(raw[current_col])
     potential_values = _to_number(raw[potential_col])
-
-    if "min" in str(time_col).lower():
-        local_time_min = time_values
-    else:
-        local_time_min = time_values / 60.0
+    local_time_min = time_values if "min" in str(time_col).lower() else time_values / 60.0
 
     if "ma" in str(current_col).lower() and "/a" not in str(current_col).lower():
         j_values = current_values / electrode_area_cm2
     else:
         j_values = current_values * 1000.0 / electrode_area_cm2
 
-    condition = _infer_condition(original_name)
+    name = entry["original_name"]
 
-    out = pd.DataFrame({
+    return pd.DataFrame({
         "local_time_min": local_time_min,
         "E_RHE": potential_values + reference_offset_v + 0.0591 * ph_value,
         "j_mA_cm2": j_values,
-        "condition": condition,
-        "dataset_label": _dataset_label(original_name),
-        "source_file": original_name,
-        "sequence_number": _sequence_number(original_name),
-        "is_b_sequence": _is_b_sequence(original_name),
-        "sequence_prefix": _sequence_prefix(original_name)
-    })
-
-    out = out.dropna(subset=["local_time_min", "j_mA_cm2", "condition", "dataset_label"])
-    return out
+        "condition": _infer_condition(name),
+        "dataset_label": _dataset_label(name),
+        "source_file": name,
+        "sequence_number": _sequence_number(name),
+        "is_b_sequence": _is_b_sequence(name),
+        "sequence_prefix": _sequence_prefix(name)
+    }).dropna(subset=["local_time_min", "j_mA_cm2", "condition", "dataset_label"])
 
 
-def _uploaded_file_entries(context):
-    entries = []
+def _stitch_dta_segments(segments):
+    if not segments:
+        raise ValueError("No valid DTA segments were available for stitching.")
 
-    for item in context.get("uploaded_files", []) or []:
-        if not isinstance(item, dict):
-            continue
-
-        original_name = _text(item.get("original_name")) or Path(_text(item.get("saved_path"))).name
-        saved_path = _text(item.get("saved_path"))
-
-        if not saved_path:
-            continue
-
-        path = Path(saved_path)
-
-        if path.exists():
-            entries.append({
-                "original_name": original_name,
-                "path": path
-            })
-
-    return entries
-
-
-def _deduplicate_entries(entries):
-    selected = {}
-
-    for entry in entries:
-        name = entry["original_name"]
-        condition = _infer_condition(name)
-        label = _dataset_label(name)
-        key = (condition, label, _is_b_sequence(name), _sequence_number(name))
-
-        if key not in selected:
-            selected[key] = entry
-            continue
-
-        existing = selected[key]["original_name"]
-
-        if "(1)" in name and "(1)" not in existing:
-            selected[key] = entry
-
-    return list(selected.values())
-
-
-def _sort_segment_key(frame):
-    row = frame.iloc[0]
-    condition = str(row["condition"])
-    label = str(row["dataset_label"])
-    is_b = int(row["is_b_sequence"])
-    number = int(row["sequence_number"])
-
-    return (condition, label, is_b, number)
-
-
-def _stitch_segments(segments):
+    raw = pd.concat(segments, ignore_index=True)
     stitched = []
 
-    for (condition, dataset_label), group in pd.concat(segments, ignore_index=True).groupby(["condition", "dataset_label"], sort=False):
-        pieces = []
-
-        for source_file, piece in group.groupby("source_file", sort=False):
-            pieces.append(piece.copy())
-
-        pieces = sorted(pieces, key=_sort_segment_key)
-
+    for (condition, dataset_label), group in raw.groupby(["condition", "dataset_label"], sort=False):
+        pieces = [piece.copy() for _, piece in group.groupby("source_file", sort=False)]
+        pieces = sorted(
+            pieces,
+            key=lambda frame: (
+                int(frame["is_b_sequence"].iloc[0]),
+                int(frame["sequence_number"].iloc[0]),
+                str(frame["source_file"].iloc[0])
+            )
+        )
         offset = 0.0
 
         for piece in pieces:
@@ -288,22 +656,17 @@ def _stitch_segments(segments):
             local_min = float(local.min())
             local_max = float(local.max())
             span = max(local_max - local_min, 0.0)
-
             piece["global_time_min"] = local - local_min + offset
             stitched.append(piece)
 
             if span > 0:
                 offset += span
 
-    if not stitched:
-        raise ValueError("No valid segments remained after stitching.")
-
-    out = pd.concat(stitched, ignore_index=True)
-    out = out.drop(columns=["local_time_min"], errors="ignore")
-    return out
+    combined = pd.concat(stitched, ignore_index=True).drop(columns=["local_time_min"], errors="ignore")
+    return combined
 
 
-def _average_condition_sequences(combined):
+def _average_dta_sequences(combined):
     averaged_parts = []
 
     for condition, condition_data in combined.groupby("condition", sort=False):
@@ -321,7 +684,7 @@ def _average_condition_sequences(combined):
 
         if len(sequences) == 1:
             label, data = sequences[0]
-            part = pd.DataFrame({
+            averaged_parts.append(pd.DataFrame({
                 "condition": condition,
                 "global_time_min": data["global_time_min"],
                 "y_mean": data["j_mA_cm2"],
@@ -335,8 +698,7 @@ def _average_condition_sequences(combined):
                 "source_y_col": "j_mA_cm2",
                 "averaging_method": "single_sequence",
                 "x_grid_method": "observed"
-            })
-            averaged_parts.append(part)
+            }))
             continue
 
         x_min = max(float(data["global_time_min"].min()) for _, data in sequences)
@@ -357,8 +719,7 @@ def _average_condition_sequences(combined):
             if len(x) < 2:
                 continue
 
-            interp = np.interp(grid, x, y, left=np.nan, right=np.nan)
-            values.append(interp)
+            values.append(np.interp(grid, x, y, left=np.nan, right=np.nan))
             names.append(label)
 
         if not values:
@@ -368,14 +729,13 @@ def _average_condition_sequences(combined):
         valid = ~np.all(np.isnan(matrix), axis=0)
         matrix = matrix[:, valid]
         valid_grid = grid[valid]
-
         n = np.sum(~np.isnan(matrix), axis=0)
         mean = np.nanmean(matrix, axis=0)
         std = np.nanstd(matrix, axis=0, ddof=1)
         std = np.where(n > 1, std, 0.0)
         sem = np.where(n > 1, std / np.sqrt(n), 0.0)
 
-        part = pd.DataFrame({
+        averaged_parts.append(pd.DataFrame({
             "condition": condition,
             "global_time_min": valid_grid,
             "y_mean": mean,
@@ -388,162 +748,225 @@ def _average_condition_sequences(combined):
             "source_x_col": "global_time_min",
             "source_y_col": "j_mA_cm2",
             "averaging_method": "interpolate",
-            "x_grid_method": "overlap" if x_max > x_min else "union"
-        })
-        averaged_parts.append(part)
+            "x_grid_method": "overlap"
+        }))
 
     if not averaged_parts:
-        raise ValueError("No averaged data was created. Check DTA parsing, condition mapping, and current conversion.")
+        raise ValueError("No averaged DTA data was created.")
 
     return pd.concat(averaged_parts, ignore_index=True)
 
 
-def _summarize_condition_ranges(df, x_col="global_time_min", y_col="j_mA_cm2"):
+def _summarize_by_condition(df, x_col, y_col):
     summaries = []
 
     for condition, group in df.groupby("condition", sort=False):
-        x = _to_number(group[x_col]).dropna()
-        y = _to_number(group[y_col]).dropna()
+        x = _to_number(group[x_col]).dropna() if x_col in group.columns else pd.Series(dtype=float)
+        y = _to_number(group[y_col]).dropna() if y_col in group.columns else pd.Series(dtype=float)
 
-        if "dataset_label" in group.columns:
-            labels = sorted(group["dataset_label"].dropna().astype(str).unique().tolist())
-        elif "replicate_names" in group.columns:
-            labels = sorted(group["replicate_names"].dropna().astype(str).unique().tolist())
-        else:
-            labels = []
-
-        summaries.append({
+        row = {
             "condition": str(condition),
             "rows": int(len(group)),
             "x_min": float(x.min()) if not x.empty else None,
             "x_max": float(x.max()) if not x.empty else None,
             "y_min": float(y.min()) if not y.empty else None,
-            "y_max": float(y.max()) if not y.empty else None,
-            "dataset_labels": labels
-        })
-
-    return summaries
-
-
-
-def _summarize_sequence_order(df):
-    summaries = []
-
-    columns = {"condition", "dataset_label", "source_file", "sequence_number", "is_b_sequence", "global_time_min", "j_mA_cm2"}
-
-    if not columns.issubset(set(df.columns)):
-        return summaries
-
-    for (condition, label), group in df.groupby(["condition", "dataset_label"], sort=False):
-        files = (
-            group[["source_file", "sequence_number", "is_b_sequence"]]
-            .drop_duplicates()
-            .sort_values(["is_b_sequence", "sequence_number", "source_file"])
-        )
-
-        x = _to_number(group["global_time_min"]).dropna()
-        y = _to_number(group["j_mA_cm2"]).dropna()
-
-        summaries.append({
-            "condition": str(condition),
-            "dataset_label": str(label),
-            "n_sequence_files": int(len(files)),
-            "first_files": files["source_file"].astype(str).head(8).tolist(),
-            "last_files": files["source_file"].astype(str).tail(8).tolist(),
-            "x_min": float(x.min()) if not x.empty else None,
-            "x_max": float(x.max()) if not x.empty else None,
-            "y_min": float(y.min()) if not y.empty else None,
             "y_max": float(y.max()) if not y.empty else None
-        })
+        }
+
+        if "saturated_or_clipped" in group.columns:
+            row["saturated_or_clipped_points"] = int(group["saturated_or_clipped"].fillna(False).sum())
+
+        summaries.append(row)
 
     return summaries
+
+
+def _register_dataset(context, df, prefix, dataset_type, source, description):
+    processed_dir = Path(context["processed_data_dir"])
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    path = processed_dir / f"{_timestamp()}_{prefix}.csv"
+    df.to_csv(path, index=False)
+    dataset = context["register_dataset"](
+        file_path=path,
+        dataset_type=dataset_type,
+        source=source,
+        uploaded_by="ai_workflow",
+        description=description
+    )
+    return dataset, path
+
+
+def _all_same_parser(classifications):
+    parsers = {item.get("parser") for item in classifications}
+    return len(parsers) == 1
 
 
 def execute_workflow_plan(plan, context):
-    processed_dir = Path(context["processed_data_dir"])
-    processed_dir.mkdir(parents=True, exist_ok=True)
-
-    electrode_area_cm2 = 0.283
-    reference_offset_v = -1.0
-    ph_value = 0.0
-
-    entries = _uploaded_file_entries(context)
-    entries = _deduplicate_entries(entries)
+    entries = _uploaded_entries(context)
 
     if not entries:
-        raise ValueError("No uploaded DTA files are available for the direct DTA workflow.")
+        raise ValueError("No uploaded files are available for workflow execution.")
 
-    segments = []
+    inspections = [_inspect_entry(entry) for entry in entries]
+    classifications = [item["classification"] for item in inspections if item.get("classification")]
+
+    if not classifications:
+        raise ValueError("No supported file classification was detected.")
+
+    parsers = [item.get("parser") for item in classifications]
     errors = []
+    created_dataset_ids = []
+    last_dataset_ids = []
+    step_results = []
 
-    for entry in entries:
-        try:
-            segments.append(
-                _load_segment(
-                    path=entry["path"],
-                    original_name=entry["original_name"],
-                    electrode_area_cm2=electrode_area_cm2,
-                    reference_offset_v=reference_offset_v,
-                    ph_value=ph_value
-                )
-            )
-        except Exception as error:
-            errors.append(f"{entry['original_name']}: {error}")
+    if all(parser == "gamry_dta_curve" for parser in parsers):
+        segments = []
 
-    if not segments:
-        raise ValueError("No DTA segments could be parsed. " + "; ".join(errors[:5]))
+        for entry in entries:
+            try:
+                segments.append(_parse_dta_entry(entry))
+            except Exception as error:
+                errors.append(f"{entry['original_name']}: {error}")
 
-    combined = _stitch_segments(segments)
-    combined = combined.sort_values(["condition", "dataset_label", "global_time_min"]).reset_index(drop=True)
-    averaged = _average_condition_sequences(combined)
+        if not segments:
+            raise ValueError("No DTA segments could be parsed. " + "; ".join(errors[:5]))
 
-    timestamp = _timestamp()
-    combined_path = processed_dir / f"{timestamp}_direct_dta_combined.csv"
-    averaged_path = processed_dir / f"{timestamp}_direct_dta_averaged.csv"
+        combined = _stitch_dta_segments(segments)
+        averaged = _average_dta_sequences(combined)
+        combined_dataset, _ = _register_dataset(
+            context,
+            combined,
+            "dta_combined",
+            "combined_data",
+            "Generic parser registry DTA combined dataset",
+            "dta_combined"
+        )
+        averaged_dataset, _ = _register_dataset(
+            context,
+            averaged,
+            "dta_averaged",
+            "averaged_replicates",
+            "Generic parser registry DTA averaged dataset",
+            "dta_averaged"
+        )
+        created_dataset_ids = [combined_dataset["dataset_id"], averaged_dataset["dataset_id"]]
+        last_dataset_ids = [averaged_dataset["dataset_id"]]
+        step_results.append({
+            "step_id": 1,
+            "action": "gamry_dta_curve_parser",
+            "created_dataset_ids": created_dataset_ids,
+            "file_inspection": inspections,
+            "combined_summary": _summarize_by_condition(combined, "global_time_min", "j_mA_cm2"),
+            "averaged_summary": _summarize_by_condition(averaged.rename(columns={"y_mean": "plot_y"}), "global_time_min", "plot_y"),
+            "recommended_plot_mapping": {
+                "x_column": "global_time_min",
+                "y_column": "y_mean",
+                "group_column": "condition",
+                "plot_type": "line"
+            },
+            "errors": errors[:20]
+        })
 
-    combined.to_csv(combined_path, index=False)
-    averaged.to_csv(averaged_path, index=False)
+    elif all(parser == "wide_pair_table" for parser in parsers):
+        frames = []
+        parse_reports = []
 
-    register_dataset = context["register_dataset"]
+        for entry, classification in zip(entries, classifications):
+            try:
+                frame, parse_report = _parse_wide_pair_table(entry, classification)
+                frames.append(frame)
+                parse_reports.append(parse_report)
+            except Exception as error:
+                errors.append(f"{entry['original_name']}: {error}")
 
-    combined_dataset = register_dataset(
-        file_path=combined_path,
-        dataset_type="combined_data",
-        source="Direct deterministic DTA workflow combined and stitched dataset",
-        uploaded_by="ai_workflow",
-        description="direct_dta_combined"
-    )
+        if not frames:
+            raise ValueError("No wide-pair table data could be parsed. " + "; ".join(errors[:5]))
 
-    averaged_dataset = register_dataset(
-        file_path=averaged_path,
-        dataset_type="averaged_replicates",
-        source="Direct deterministic DTA workflow averaged dataset",
-        uploaded_by="ai_workflow",
-        description="direct_dta_averaged"
-    )
+        combined = pd.concat(frames, ignore_index=True)
+        x_column = parse_reports[0]["x_column"]
+        y_column = parse_reports[0]["y_column"]
+        dataset, _ = _register_dataset(
+            context,
+            combined,
+            "wide_pair_combined",
+            "combined_data",
+            "Generic wide-pair table converted to long-format dataset",
+            "wide_pair_combined_long_format"
+        )
+        created_dataset_ids = [dataset["dataset_id"]]
+        last_dataset_ids = [dataset["dataset_id"]]
+        step_results.append({
+            "step_id": 1,
+            "action": "wide_pair_table_parser",
+            "created_dataset_ids": created_dataset_ids,
+            "file_inspection": inspections,
+            "parse_reports": parse_reports,
+            "condition_summary": _summarize_by_condition(combined, x_column, y_column),
+            "dataset_columns": list(combined.columns),
+            "recommended_plot_mapping": {
+                "x_column": x_column,
+                "y_column": y_column,
+                "group_column": "condition",
+                "plot_type": "line"
+            },
+            "errors": errors[:20]
+        })
 
-    condition_counts = combined.groupby("condition")["source_file"].nunique().to_dict()
+    elif all(parser == "long_table" for parser in parsers):
+        frames = []
+        parse_reports = []
+
+        for entry, classification in zip(entries, classifications):
+            try:
+                frame, parse_report = _parse_long_table(entry, classification)
+                frames.append(frame)
+                parse_reports.append(parse_report)
+            except Exception as error:
+                errors.append(f"{entry['original_name']}: {error}")
+
+        if not frames:
+            raise ValueError("No long-table data could be parsed. " + "; ".join(errors[:5]))
+
+        combined = pd.concat(frames, ignore_index=True)
+        x_column = parse_reports[0]["x_column"]
+        y_column = parse_reports[0]["y_column"]
+        dataset, _ = _register_dataset(
+            context,
+            combined,
+            "long_table_combined",
+            "combined_data",
+            "Generic long table processed dataset",
+            "long_table_combined"
+        )
+        created_dataset_ids = [dataset["dataset_id"]]
+        last_dataset_ids = [dataset["dataset_id"]]
+        step_results.append({
+            "step_id": 1,
+            "action": "long_table_parser",
+            "created_dataset_ids": created_dataset_ids,
+            "file_inspection": inspections,
+            "parse_reports": parse_reports,
+            "condition_summary": _summarize_by_condition(combined, x_column, y_column),
+            "dataset_columns": list(combined.columns),
+            "recommended_plot_mapping": {
+                "x_column": x_column,
+                "y_column": y_column,
+                "group_column": "condition",
+                "plot_type": "line"
+            },
+            "errors": errors[:20]
+        })
+
+    else:
+        raise ValueError(
+            "Mixed or unsupported data shapes were detected. "
+            f"Detected parsers: {parsers}. Review file_inspection diagnostics before processing."
+        )
 
     return {
-        "created_dataset_ids": [
-            combined_dataset["dataset_id"],
-            averaged_dataset["dataset_id"]
-        ],
-        "last_dataset_ids": [averaged_dataset["dataset_id"]],
+        "created_dataset_ids": created_dataset_ids,
+        "last_dataset_ids": last_dataset_ids,
         "plot_urls": [],
-        "step_results": [
-            {
-                "step_id": 1,
-                "action": "direct_dta_parse_stitch_average",
-                "created_dataset_ids": [
-                    combined_dataset["dataset_id"],
-                    averaged_dataset["dataset_id"]
-                ],
-                "condition_counts": condition_counts,
-                "combined_summary": _summarize_condition_ranges(combined, "global_time_min", "j_mA_cm2"),
-                "sequence_order_summary": _summarize_sequence_order(combined),
-                "averaged_summary": _summarize_condition_ranges(averaged.rename(columns={"y_mean": "j_mA_cm2"}), "global_time_min", "j_mA_cm2"),
-                "errors": errors[:10]
-            }
-        ]
+        "step_results": step_results,
+        "file_inspection": inspections
     }
