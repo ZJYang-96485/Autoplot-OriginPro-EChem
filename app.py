@@ -1053,6 +1053,42 @@ def reference_condition_color(group_name):
     return None
 
 
+def reference_condition_label(group_name):
+    text = str(group_name).strip()
+    compact = text.lower().replace(" ", "").replace("_", "").replace("-", "")
+
+    if "no3" in compact or "nano3" in compact:
+        return r"PBS+NaNO$_3$"
+
+    if compact == "pbs":
+        return "PBS"
+
+    return normalize_matplotlib_text(text)
+
+
+def reference_condition_sort_key(value):
+    compact = str(value).strip().lower().replace(" ", "").replace("_", "").replace("-", "")
+
+    if compact == "pbs":
+        return (0, compact)
+
+    if "no3" in compact or "nano3" in compact:
+        return (1, compact)
+
+    return (2, compact)
+
+
+def sort_reference_legend(handles, labels):
+    pairs = [(handle, label) for handle, label in zip(handles, labels) if str(label).strip()]
+
+    if not pairs:
+        return handles, labels
+
+    pairs = sorted(pairs, key=lambda item: reference_condition_sort_key(item[1]))
+
+    return [item[0] for item in pairs], [item[1] for item in pairs]
+
+
 def plot_grouped_curves(
     ax,
     df,
@@ -1086,8 +1122,11 @@ def plot_grouped_curves(
     if data.empty:
         raise ValueError("No valid data points were found for the selected group-by plot.")
 
-    for group_name, group in data.groupby(group_col, sort=False):
-        label = normalize_matplotlib_text(str(group_name))
+    grouped_items = list(data.groupby(group_col, sort=False))
+    grouped_items = sorted(grouped_items, key=lambda item: reference_condition_sort_key(item[0]))
+
+    for group_name, group in grouped_items:
+        label = reference_condition_label(group_name)
 
         if plot_type == "scatter":
             if group_color_mode == "same":
@@ -1356,7 +1395,7 @@ def setup_step_axis(
 ):
     top_axis = ax.twiny()
     top_axis.patch.set_alpha(0)
-    top_axis.set_xlabel(x_label if x_label else format_column_label(x_col))
+    top_axis.set_xlabel(x_label if x_label else format_column_label(x_col), labelpad=label_pad)
     top_axis.xaxis.tick_top()
     top_axis.xaxis.set_label_position("top")
     top_axis.spines["bottom"].set_visible(False)
@@ -2105,6 +2144,7 @@ def create_plot(
         labels += labels_secondary
 
     if show_legend and handles and any(labels):
+        handles, labels = sort_reference_legend(handles, labels)
         legend_title = group_label if group_col and group_label else None
         resolved_legend_location = choose_legend_location_from_axes(ax) if legend_location == "auto" else legend_location
         legend_kwargs = {

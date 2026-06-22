@@ -745,8 +745,16 @@ def _apply_electrochem_reference_defaults(config, column_names, user_request):
     if "global_time_min" in columns_lower:
         config["x_column"] = columns_lower["global_time_min"]
 
+    averaged_required = any(term in text for term in ["averaged", "averaged_replicates", "selected averaged dataset", "use the newest averaged"])
+
     if "y_mean" in columns_lower:
         config["y_column"] = columns_lower["y_mean"]
+    elif averaged_required:
+        raise ValueError(
+            "The reference electrochemical plot requires the selected averaged_replicates dataset with a y_mean column. "
+            "The selected dataset does not contain y_mean, so it is probably combined_data or raw data. "
+            "Select the newest averaged_replicates dataset and plot again."
+        )
     elif "j_ma_cm2" in columns_lower:
         config["y_column"] = columns_lower["j_ma_cm2"]
 
@@ -827,7 +835,8 @@ def _apply_electrochem_reference_defaults(config, column_names, user_request):
 
     config["notes"] = (
         "Reference electrochemical plot preset applied: top time axis, bottom potential labels, "
-        "horizontal grid only, no legend title/frame, PBS purple and PBS+NaNO3 red."
+        "same top/bottom label padding, horizontal grid only, no legend title/frame, "
+        "legend ordered as PBS then PBS+NaNO3, PBS purple and PBS+NaNO3 red."
     )
 
     return config
