@@ -1620,6 +1620,57 @@ def format_column_label(column_name):
     return normalize_matplotlib_text(text)
 
 
+
+def check_reference_protocol_coverage(df, x_col, y_col, group_col, x_min, x_max):
+    if x_col != "global_time_min" or y_col != "y_mean" or group_col != "condition":
+        return
+
+    if x_min is None or x_max is None:
+        return
+
+    if float(x_max) < 100:
+        return
+
+    required_conditions = {"PBS", "PBS+NaNO3"}
+    present_conditions = {str(value).strip() for value in df[group_col].dropna().unique()}
+
+    if not required_conditions.issubset(present_conditions):
+        return
+
+    expected_span = float(x_max) - float(x_min)
+
+    if expected_span <= 0:
+        return
+
+    incomplete = []
+
+    for condition, group in df.groupby(group_col, sort=False):
+        x = to_numeric_series(group, x_col).dropna()
+
+        if x.empty:
+            incomplete.append(f"{condition}: no valid X values")
+            continue
+
+        group_min = float(x.min())
+        group_max = float(x.max())
+        coverage = (group_max - group_min) / expected_span
+
+        if coverage < 0.85:
+            incomplete.append(
+                f"{condition}: covers {group_min:.2f} to {group_max:.2f} min "
+                f"({coverage * 100:.1f}% of requested {float(x_min):.0f}-{float(x_max):.0f} min range)"
+            )
+
+    if incomplete:
+        message = (
+            "Cannot reproduce the requested 0-160 min reference plot from the selected averaged dataset because "
+            "at least one condition does not cover the full protocol time range. "
+            "Do not stretch or mirror incomplete experimental data. "
+            "Missing/incomplete coverage: " + "; ".join(incomplete)
+        )
+        raise ValueError(message)
+
+
 def create_plot(
     dataset_id,
     x_col,
@@ -1879,6 +1930,8 @@ def create_plot(
 
     if y_tick_mode == "auto" and (y_major_interval is not None or y_minor_interval is not None):
         y_tick_mode = "uniform"
+
+    check_reference_protocol_coverage(df, x_col, y_col, group_col, x_min, x_max)
 
     step_axis_decimal_places = clamp_int(step_axis_decimal_places, 1, 0, 6)
     step_axis_label_stride = clamp_int(step_axis_label_stride, 2, 1, 100)

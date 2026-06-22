@@ -328,35 +328,6 @@ def _replicate_candidates():
     ]
 
 
-
-def _normalize_reference_protocol_time(combined, target_max=160.0):
-    if "condition" not in combined.columns or "dataset_label" not in combined.columns or "global_time_min" not in combined.columns:
-        return combined
-
-    conditions = {str(value) for value in combined["condition"].dropna().unique()}
-
-    if not {"PBS", "PBS+NaNO3"}.issubset(conditions):
-        return combined
-
-    parts = []
-
-    for (condition, label), group in combined.groupby(["condition", "dataset_label"], sort=False):
-        group = group.copy()
-        x = _to_number(group["global_time_min"])
-        x_min = float(x.min()) if x.notna().any() else 0.0
-        x_max = float(x.max()) if x.notna().any() else 0.0
-        group["raw_global_time_min"] = group["global_time_min"]
-
-        if x_max > x_min:
-            group["global_time_min"] = (x - x_min) / (x_max - x_min) * float(target_max)
-        else:
-            group["global_time_min"] = x
-
-        parts.append(group)
-
-    return pd.concat(parts, ignore_index=True)
-
-
 def _execute_dta(entries, context):
     entries, duplicates = _deduplicate(entries)
     segments = []
@@ -423,7 +394,6 @@ def _execute_dta(entries, context):
                 offset += span
 
     combined = pd.concat(stitched, ignore_index=True).drop(columns=["local_time_min"], errors="ignore")
-    combined = _normalize_reference_protocol_time(combined, target_max=160.0)
     averaged = _average_sequences(combined, "global_time_min", "j_mA_cm2", "condition", "dataset_label", "global_time_min")
 
     return _save_register(combined, averaged, context, "dta_auto", errors, duplicates, "global_time_min", "j_mA_cm2")
@@ -582,6 +552,39 @@ def _ranges(df, x_col, y_col):
     return out
 
 
+
+def _protocol_coverage_summary(df, x_col="global_time_min", condition_col="condition", expected_min=0.0, expected_max=160.0):
+    if x_col not in df.columns or condition_col not in df.columns:
+        return []
+
+    expected_span = float(expected_max) - float(expected_min)
+    summaries = []
+
+    for condition, group in df.groupby(condition_col, sort=False):
+        x = _to_number(group[x_col]).dropna()
+
+        if x.empty:
+            coverage = 0.0
+            x_min = None
+            x_max = None
+        else:
+            x_min = float(x.min())
+            x_max = float(x.max())
+            coverage = (x_max - x_min) / expected_span if expected_span > 0 else 0.0
+
+        summaries.append({
+            "condition": str(condition),
+            "x_min": x_min,
+            "x_max": x_max,
+            "expected_min": float(expected_min),
+            "expected_max": float(expected_max),
+            "coverage_fraction": float(coverage),
+            "appears_complete_for_reference_protocol": bool(coverage >= 0.85)
+        })
+
+    return summaries
+
+
 def _save_register(combined, averaged, context, prefix, errors, duplicates, x_col, y_col):
     processed_dir = Path(context["processed_data_dir"])
     processed_dir.mkdir(parents=True, exist_ok=True)
@@ -623,7 +626,8 @@ def _save_register(combined, averaged, context, prefix, errors, duplicates, x_co
                 "dataset_columns": {
                     "combined": list(combined.columns),
                     "averaged": list(averaged.columns)
-                }
+                },
+                "protocol_coverage_summary": _protocol_coverage_summary(averaged, x_col if x_col in averaged.columns else "global_time_min")
             }
         ]
     }
