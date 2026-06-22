@@ -346,6 +346,16 @@ DEFAULT_VALUES = {
     "show_left_ticks": True,
     "show_right_ticks": True,
     "show_grid": False,
+    "grid_axis": "both",
+    "grid_which": "major",
+    "major_grid_linestyle": "solid",
+    "minor_grid_linestyle": "dashed",
+    "major_grid_alpha": 0.25,
+    "minor_grid_alpha": 0.12,
+    "major_grid_width": 0.7,
+    "minor_grid_width": 0.5,
+    "legend_location": "best",
+    "legend_frame": True,
     "secondary_mode": "none",
     "x2_column": "none",
     "y2_column": "none",
@@ -436,6 +446,16 @@ PLOT_CONFIG_SCHEMA = {
         "show_left_ticks": {"type": ["boolean", "null"]},
         "show_right_ticks": {"type": ["boolean", "null"]},
         "show_grid": {"type": ["boolean", "null"]},
+        "grid_axis": {"type": "string", "enum": ["x", "y", "both"]},
+        "grid_which": {"type": "string", "enum": ["major", "minor", "both"]},
+        "major_grid_linestyle": {"type": "string", "enum": ["solid", "dashed", "dotted", "dashdot"]},
+        "minor_grid_linestyle": {"type": "string", "enum": ["solid", "dashed", "dotted", "dashdot"]},
+        "major_grid_alpha": {"type": ["number", "null"]},
+        "minor_grid_alpha": {"type": ["number", "null"]},
+        "major_grid_width": {"type": ["number", "null"]},
+        "minor_grid_width": {"type": ["number", "null"]},
+        "legend_location": {"type": "string", "enum": ["auto", "best", "upper right", "upper left", "lower right", "lower left"]},
+        "legend_frame": {"type": ["boolean", "null"]},
         "secondary_mode": {"type": "string", "enum": ["none", "same_y_different_x", "same_x_different_y"]},
         "x2_column": {"type": "string"},
         "y2_column": {"type": "string"},
@@ -522,6 +542,16 @@ PLOT_CONFIG_SCHEMA = {
         "show_left_ticks",
         "show_right_ticks",
         "show_grid",
+        "grid_axis",
+        "grid_which",
+        "major_grid_linestyle",
+        "minor_grid_linestyle",
+        "major_grid_alpha",
+        "minor_grid_alpha",
+        "major_grid_width",
+        "minor_grid_width",
+        "legend_location",
+        "legend_frame",
         "secondary_mode",
         "x2_column",
         "y2_column",
@@ -670,7 +700,7 @@ def _apply_averaged_replicate_defaults(config, column_names, user_request):
 
     if condition_col:
         config["group_column"] = condition_col
-        config["group_label"] = config.get("group_label") or "Condition"
+        config["group_label"] = ""
         config["show_legend"] = True
         config["group_color_mode"] = "auto"
 
@@ -687,6 +717,118 @@ def _apply_averaged_replicate_defaults(config, column_names, user_request):
 
     if "y_sem" in [column.lower() for column in column_names]:
         config["notes"] += " The dataset includes y_sem for future error-band plotting."
+
+    return config
+
+
+
+def _apply_electrochem_reference_defaults(config, column_names, user_request):
+    text = str(user_request).lower()
+    trigger_terms = [
+        "reference",
+        "reproduce",
+        "electrochemical",
+        "publication",
+        "pbs",
+        "nano3",
+        "no3",
+        "rhe",
+        "bottom labels",
+        "horizontal grid"
+    ]
+
+    if not any(term in text for term in trigger_terms):
+        return config
+
+    columns_lower = {str(column).lower(): column for column in column_names}
+
+    if "global_time_min" in columns_lower:
+        config["x_column"] = columns_lower["global_time_min"]
+
+    if "y_mean" in columns_lower:
+        config["y_column"] = columns_lower["y_mean"]
+    elif "j_ma_cm2" in columns_lower:
+        config["y_column"] = columns_lower["j_ma_cm2"]
+
+    if "condition" in columns_lower:
+        config["group_column"] = columns_lower["condition"]
+
+    config.update({
+        "plot_title": "",
+        "plot_type": "line",
+        "data_reduction": "raw",
+        "summary_group_column": "none",
+        "x_label": "",
+        "top_x_label": "$t$ / min",
+        "y_label": "$j$ / mA cm$^{-2}$",
+        "step_axis_label": "$E$ / V vs. RHE",
+        "x_min": 0,
+        "x_max": 160,
+        "y_min": -100,
+        "y_max": 10,
+        "x_tick_mode": "uniform",
+        "x_major_interval": 10,
+        "x_minor_interval": 5,
+        "y_tick_mode": "uniform",
+        "y_major_interval": 20,
+        "y_minor_interval": 10,
+        "use_step_axis": True,
+        "step_axis_mode": "uniform_custom",
+        "step_axis_placement": "custom_positions",
+        "step_axis_value_column": "none",
+        "step_axis_group_column": "none",
+        "step_axis_custom_labels": "0.5,0.2,-0.1,-0.5,-0.9,-0.7,-0.3,0,0.4",
+        "step_axis_custom_positions": "5,20,40,60,80,100,120,140,160",
+        "step_axis_decimal_places": 1,
+        "step_axis_label_stride": 1,
+        "step_axis_label_rotation": 0,
+        "step_axis_label_pad": 14,
+        "bottom_margin": 0.20,
+        "figure_width": 8.0,
+        "figure_height": 5.5,
+        "figure_dpi": 300,
+        "line_order": "sort_x",
+        "line_width": 2.0,
+        "opacity": 1.0,
+        "show_markers": False,
+        "show_legend": True,
+        "group_label": "",
+        "group_color_mode": "auto",
+        "legend_location": "lower right",
+        "legend_frame": False,
+        "axis_label_size": 18,
+        "tick_label_size": 13,
+        "axis_label_weight": "bold",
+        "title_size": 18,
+        "legend_font_size": 11,
+        "spine_width": 1.3,
+        "tick_width": 1.2,
+        "tick_length": 5,
+        "tick_direction": "in",
+        "show_full_frame": True,
+        "show_top_ticks": True,
+        "show_bottom_ticks": True,
+        "show_left_ticks": True,
+        "show_right_ticks": True,
+        "show_grid": True,
+        "grid_axis": "y",
+        "grid_which": "both",
+        "major_grid_linestyle": "solid",
+        "minor_grid_linestyle": "dashed",
+        "major_grid_alpha": 0.22,
+        "minor_grid_alpha": 0.14,
+        "major_grid_width": 0.7,
+        "minor_grid_width": 0.5,
+        "marker_color": "#9A4DFF",
+        "line_color": "#9A4DFF",
+        "second_marker_color": "#FF3030",
+        "second_line_color": "#FF3030"
+    })
+
+    config["notes"] = (
+        "Reference electrochemical plot preset applied: top time axis, bottom potential labels, "
+        "horizontal grid only, no legend title/frame, PBS purple and PBS+NaNO3 red."
+    )
 
     return config
 
@@ -780,6 +922,7 @@ def parse_plot_request(user_request, column_names):
             "For line or scatter plots, always choose an existing Y column. "
             "If y_mean exists, prefer y_mean for averaged datasets. If y_mean does not exist but j_mA_cm2 exists, use j_mA_cm2. "
             "Use 'none' for optional column fields that are not needed, but never use 'none' for y_column in line or scatter plots. "
+            "For the reference electrochemical PBS/PBS+NaNO3 plot, set group_label to an empty string, legend_frame=false, legend_location='lower right', grid_axis='y', grid_which='both', figure_width=8, figure_height=5.5, top_x_label='$t$ / min, step_axis_label='$E$ / V vs. RHE', and y_label='$j$ / mA cm$^{-2}$'. "
             "Use null for numeric, boolean, and color fields when the user did not specify them and no style profile is clearly requested. "
             "When the user asks for a journal or output style, select the closest style_profile from the supported profiles. "
             "Use style_profile='publication' for generic publication-quality scientific figures. "
@@ -813,6 +956,7 @@ def parse_plot_request(user_request, column_names):
     config = json.loads(output_text)
     config = _merge_profile_defaults(config)
     config = _apply_averaged_replicate_defaults(config, column_names, user_request)
+    config = _apply_electrochem_reference_defaults(config, column_names, user_request)
     config = _validate_config(config, column_names)
 
     return config

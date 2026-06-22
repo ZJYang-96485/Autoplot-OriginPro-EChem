@@ -1039,6 +1039,20 @@ def plot_single_curve(
         raise ValueError("Unsupported plot type.")
 
 
+
+def reference_condition_color(group_name):
+    text = str(group_name).strip().lower()
+    compact = text.replace(" ", "").replace("_", "").replace("-", "")
+
+    if "no3" in compact or "nano3" in compact:
+        return "#FF3030"
+
+    if compact == "pbs" or compact.startswith("pbs"):
+        return "#9A4DFF"
+
+    return None
+
+
 def plot_grouped_curves(
     ax,
     df,
@@ -1087,12 +1101,21 @@ def plot_grouped_curves(
                     label=label
                 )
             else:
+                reference_color = reference_condition_color(group_name)
+                scatter_kwargs = {
+                    "alpha": opacity,
+                    "s": marker_size,
+                    "label": label
+                }
+
+                if reference_color:
+                    scatter_kwargs["facecolor"] = reference_color
+                    scatter_kwargs["edgecolor"] = reference_color
+
                 ax.scatter(
                     group[x_col],
                     group[y_col],
-                    alpha=opacity,
-                    s=marker_size,
-                    label=label
+                    **scatter_kwargs
                 )
         else:
             group = order_data(group, x_col, line_order)
@@ -1112,14 +1135,22 @@ def plot_grouped_curves(
                     label=label
                 )
             else:
+                reference_color = reference_condition_color(group_name)
+                plot_kwargs = {
+                    "marker": marker,
+                    "linewidth": line_width,
+                    "markersize": max(1, marker_size ** 0.5),
+                    "alpha": opacity,
+                    "label": label
+                }
+
+                if reference_color:
+                    plot_kwargs["color"] = reference_color
+
                 ax.plot(
                     group[x_col],
                     group[y_col],
-                    marker=marker,
-                    linewidth=line_width,
-                    markersize=max(1, marker_size ** 0.5),
-                    alpha=opacity,
-                    label=label
+                    **plot_kwargs
                 )
 
 
@@ -1631,6 +1662,10 @@ def create_plot(
     bottom_annotation = normalize_matplotlib_text(bottom_annotation)
     primary_label = normalize_matplotlib_text(primary_label)
     group_label = normalize_matplotlib_text(group_label)
+
+    if str(group_label).strip().lower() == "condition":
+        group_label = ""
+
     step_axis_label = normalize_matplotlib_text(step_axis_label)
     top_x_label = normalize_matplotlib_text(top_x_label)
     right_y_label = normalize_matplotlib_text(right_y_label)
