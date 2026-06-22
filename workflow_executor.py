@@ -62,7 +62,7 @@ def _float(value, default):
 
 
 
-def _to_numeric_series(values):
+def _to_numeric_series(values, *args, **kwargs):
     if isinstance(values, pd.DataFrame):
         values = values.iloc[:, 0]
 
