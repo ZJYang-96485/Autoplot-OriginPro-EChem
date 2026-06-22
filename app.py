@@ -1436,17 +1436,17 @@ def bold_reference_math_label(value):
     text = str(value).strip()
 
     replacements = {
-        "t / min": r"$\mathbf{\mathit{t}}\ /\ \mathbf{min}$",
-        "$t$ / min": r"$\mathbf{\mathit{t}}\ /\ \mathbf{min}$",
-        r"$\mathit{t}$ / min": r"$\mathbf{\mathit{t}}\ /\ \mathbf{min}$",
-        "E / V vs. RHE": r"$\mathbf{\mathit{E}}\ /\ \mathbf{V\ vs.\ RHE}$",
-        "$E$ / V vs. RHE": r"$\mathbf{\mathit{E}}\ /\ \mathbf{V\ vs.\ RHE}$",
-        r"$\mathit{E}$ / V vs. RHE": r"$\mathbf{\mathit{E}}\ /\ \mathbf{V\ vs.\ RHE}$",
-        "j / mA cm^-2": r"$\mathbf{\mathit{j}}\ /\ \mathbf{mA\ cm^{-2}}$",
-        "j / mA cm$^{-2}$": r"$\mathbf{\mathit{j}}\ /\ \mathbf{mA\ cm^{-2}}$",
-        "$j$ / mA cm^-2": r"$\mathbf{\mathit{j}}\ /\ \mathbf{mA\ cm^{-2}}$",
-        "$j$ / mA cm$^{-2}$": r"$\mathbf{\mathit{j}}\ /\ \mathbf{mA\ cm^{-2}}$",
-        r"$\mathit{j}$ / mA cm$^{-2}$": r"$\mathbf{\mathit{j}}\ /\ \mathbf{mA\ cm^{-2}}$"
+        "t / min": r"$\mathbf{t\ /\ min}$",
+        "$t$ / min": r"$\mathbf{t\ /\ min}$",
+        r"$\mathit{t}$ / min": r"$\mathbf{t\ /\ min}$",
+        "E / V vs. RHE": r"$\mathbf{E\ /\ V\ vs.\ RHE}$",
+        "$E$ / V vs. RHE": r"$\mathbf{E\ /\ V\ vs.\ RHE}$",
+        r"$\mathit{E}$ / V vs. RHE": r"$\mathbf{E\ /\ V\ vs.\ RHE}$",
+        "j / mA cm^-2": r"$\mathbf{j\ /\ mA\ cm^{-2}}$",
+        "j / mA cm$^{-2}$": r"$\mathbf{j\ /\ mA\ cm^{-2}}$",
+        "$j$ / mA cm^-2": r"$\mathbf{j\ /\ mA\ cm^{-2}}$",
+        "$j$ / mA cm$^{-2}$": r"$\mathbf{j\ /\ mA\ cm^{-2}}$",
+        r"$\mathit{j}$ / mA cm$^{-2}$": r"$\mathbf{j\ /\ mA\ cm^{-2}}$"
     }
 
     return replacements.get(text, text)
@@ -1553,15 +1553,15 @@ def format_column_label(column_name):
     text = str(column_name).strip()
 
     known_labels = {
-        "global_time_min": r"$\mathbf{\mathit{t}}\ /\ \mathbf{min}$",
+        "global_time_min": r"$\mathbf{t\ /\ min}$",
         "global_time_s": r"$\mathbf{\mathit{t}}\ /\ \mathbf{s}$",
         "T_s": r"$\mathbf{\mathit{t}}\ /\ \mathbf{s}$",
         "Potential_V": r"$E$ / V",
-        "E_RHE": r"$\mathbf{\mathit{E}}\ /\ \mathbf{V\ vs.\ RHE}$",
+        "E_RHE": r"$\mathbf{E\ /\ V\ vs.\ RHE}$",
         "Vf_V_vs_Ref": r"$E$ / V vs. Ref",
         "Current_mA": r"$I$ / mA",
         "Im_A": r"$I$ / A",
-        "j_mA_cm2": r"$\mathbf{\mathit{j}}\ /\ \mathbf{mA\ cm^{-2}}$",
+        "j_mA_cm2": r"$\mathbf{j\ /\ mA\ cm^{-2}}$",
         "j_A_cm2": r"$\mathbf{\mathit{j}}\ /\ \mathbf{A\ cm^{-2}}$",
         "Z_ohm": r"$Z$ / $\Omega$",
         "phase_deg": r"Phase / degree",
