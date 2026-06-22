@@ -5,6 +5,24 @@ import numpy as np
 import pandas as pd
 
 
+
+def _to_numeric_series(values):
+    if isinstance(values, pd.DataFrame):
+        values = values.iloc[:, 0]
+
+    if isinstance(values, pd.Series):
+        cleaned = (
+            values.astype(str)
+            .str.strip()
+            .str.replace("\u2212", "-", regex=False)
+            .str.replace(",", ".", regex=False)
+        )
+        cleaned = cleaned.mask(cleaned.str.lower().isin(["", "none", "nan", "na", "n/a"]))
+        return pd.to_numeric(cleaned, errors="coerce")
+
+    return pd.to_numeric(values, errors="coerce")
+
+
 def _as_text(value):
     if value is None:
         return ""
@@ -55,8 +73,8 @@ def _prepare_dataframe(input_data, x_col, y_col, condition_col, replicate_col):
     df.loc[df[condition_col] == "", condition_col] = "Condition"
     df.loc[df[replicate_col] == "", replicate_col] = "Replicate"
 
-    df[x_col] = pd.to_numeric(df[x_col], errors="coerce")
-    df[y_col] = pd.to_numeric(df[y_col], errors="coerce")
+    df[x_col] = _to_numeric_series(df[x_col])
+    df[y_col] = _to_numeric_series(df[y_col])
 
     df = df.dropna(subset=[x_col, y_col, condition_col, replicate_col])
 
