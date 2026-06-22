@@ -1645,7 +1645,7 @@ def check_reference_protocol_coverage(df, x_col, y_col, group_col, x_min, x_max)
     incomplete = []
 
     for condition, group in df.groupby(group_col, sort=False):
-        x = to_numeric_series(group, x_col).dropna()
+        x = get_numeric_series(group, x_col).dropna()
 
         if x.empty:
             incomplete.append(f"{condition}: no valid X values")
