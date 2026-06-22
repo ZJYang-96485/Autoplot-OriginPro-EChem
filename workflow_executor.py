@@ -2,6 +2,7 @@
 from pathlib import Path
 from datetime import datetime
 import re
+import hashlib
 import pandas as pd
 import numpy as np
 
@@ -184,6 +185,26 @@ def _is_b_sequence(file_name):
     return "chronoa_b" in lower or "_b_" in lower
 
 
+def _copy_index(file_name):
+    stem = Path(str(file_name)).stem
+    match = re.search(r"\((\d+)\)$", stem)
+
+    if match:
+        return int(match.group(1))
+
+    return 0
+
+
+def _content_hash(path):
+    hasher = hashlib.sha256()
+
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            hasher.update(chunk)
+
+    return hasher.hexdigest()
+
+
 def _sequence_prefix(file_name):
     stem = Path(str(file_name)).stem
     stem = re.sub(r"\(\d+\)$", "", stem)
@@ -205,32 +226,69 @@ def _dataset_label(file_name):
 
 
 def _deduplicate(entries):
-    kept = {}
+    kept = []
+    seen_exact = {}
     duplicates = []
 
     for entry in entries:
         name = entry["original_name"]
-        key = (
+        exact_key = (
             _infer_condition(name),
             _dataset_label(name),
             _is_b_sequence(name),
+            _copy_index(name),
             _sequence_number(name),
-            entry["extension"]
+            entry["extension"],
+            _content_hash(entry["path"])
         )
 
-        if key not in kept:
-            kept[key] = entry
+        if exact_key in seen_exact:
+            duplicates.append({
+                "kept": seen_exact[exact_key]["original_name"],
+                "discarded": name,
+                "reason": "exact_same_content"
+            })
             continue
 
-        existing = kept[key]["original_name"]
+        seen_exact[exact_key] = entry
+        kept.append(entry)
 
-        if "(1)" not in name and "(1)" in existing:
-            duplicates.append({"kept": name, "discarded": existing})
-            kept[key] = entry
-        else:
-            duplicates.append({"kept": existing, "discarded": name})
+    return kept, duplicates
 
-    return list(kept.values()), duplicates
+
+def _repeated_sequence_report(entries):
+    records = []
+
+    for entry in entries:
+        name = entry["original_name"]
+        records.append({
+            "file_name": name,
+            "condition": _infer_condition(name),
+            "dataset_label": _dataset_label(name),
+            "is_b_sequence": bool(_is_b_sequence(name)),
+            "copy_index": int(_copy_index(name)),
+            "sequence_number": int(_sequence_number(name))
+        })
+
+    if not records:
+        return []
+
+    df = pd.DataFrame(records)
+    repeated = []
+
+    for keys, group in df.groupby(["condition", "dataset_label", "is_b_sequence", "sequence_number"], sort=False):
+        if len(group) > 1:
+            repeated.append({
+                "condition": str(keys[0]),
+                "dataset_label": str(keys[1]),
+                "is_b_sequence": bool(keys[2]),
+                "sequence_number": int(keys[3]),
+                "copy_indices": sorted(group["copy_index"].astype(int).unique().tolist()),
+                "files": group["file_name"].astype(str).tolist(),
+                "interpretation": "non-identical repeated sequence files are kept; copy-index groups are treated as continuation blocks"
+            })
+
+    return repeated
 
 
 def _inspect_entry(entry):
@@ -330,6 +388,7 @@ def _replicate_candidates():
 
 def _execute_dta(entries, context):
     entries, duplicates = _deduplicate(entries)
+    repeated_sequences = _repeated_sequence_report(entries)
     segments = []
     errors = []
 
@@ -357,6 +416,7 @@ def _execute_dta(entries, context):
                 "dataset_label": _dataset_label(name),
                 "source_file": name,
                 "sequence_number": _sequence_number(name),
+                "copy_index": _copy_index(name),
                 "is_b_sequence": _is_b_sequence(name)
             }).dropna(subset=["local_time_min", "j_mA_cm2", "condition", "dataset_label"])
 
@@ -378,6 +438,7 @@ def _execute_dta(entries, context):
             pieces,
             key=lambda frame: (
                 int(frame["is_b_sequence"].iloc[0]),
+                int(_copy_index(str(frame["source_file"].iloc[0]))),
                 int(frame["sequence_number"].iloc[0]),
                 str(frame["source_file"].iloc[0])
             )
@@ -396,7 +457,9 @@ def _execute_dta(entries, context):
     combined = pd.concat(stitched, ignore_index=True).drop(columns=["local_time_min"], errors="ignore")
     averaged = _average_sequences(combined, "global_time_min", "j_mA_cm2", "condition", "dataset_label", "global_time_min")
 
-    return _save_register(combined, averaged, context, "dta_auto", errors, duplicates, "global_time_min", "j_mA_cm2")
+    result = _save_register(combined, averaged, context, "dta_auto", errors, duplicates, "global_time_min", "j_mA_cm2")
+    result["step_results"][0]["repeated_sequence_report"] = repeated_sequences
+    return result
 
 
 def _normalize_table_file(entry):
