@@ -135,7 +135,11 @@ The plotting prompt should not ask the software to fix incomplete processing. If
 
 Recommended AI instruction:
 
+1. Consult with your own AI.
+
 “Create a plotting prompt for this software based on the processed dataset. The prompt should map the correct columns, preserve the experimental data shape, apply publication-style formatting, and include validation checks for required columns, conditions, and data coverage. The prompt should stop with diagnostics instead of generating a misleading plot when the selected dataset is incomplete or incompatible.”
+
+2. Run in this software.
 
 
 The Nature-style preset is intended as a convenient starting point for clean, compact scientific figures. It is not an official journal template. Users should always check the final formatting requirements of the target journal before submission.
