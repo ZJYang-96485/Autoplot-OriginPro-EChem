@@ -1,19 +1,24 @@
 from pathlib import Path
-import re
 
 import pandas as pd
 
 from data_loader import read_dataset
+from processing_utils import extract_sequence_index as _extract_sequence_index
+from processing_utils import resolve_column
+from processing_utils import to_numeric_series
 
 
-def extract_sequence_index(file_path, fallback_index, sequence_regex=r"#\s*(\d+)"):
-    file_name = Path(file_path).name
-    match = re.search(sequence_regex, file_name)
+DEFAULT_SEQUENCE_REGEX = r"#\s*(\d+)"
+TIME_COLUMN_ALIASES = ["T_s", "T", "Time", "time_s", "time_sec", "seconds", "elapsed_time_s"]
+STEP_VARIABLE_ALIASES = ["Vf_V_vs_Ref", "Vf_V", "Vf", "E", "Potential", "Potential_V", "voltage", "step_variable_value"]
 
-    if match:
-        return int(match.group(1))
 
-    return fallback_index
+def extract_sequence_index(file_path, fallback_index, sequence_regex=DEFAULT_SEQUENCE_REGEX):
+    return _extract_sequence_index(
+        file_name=Path(file_path).name,
+        fallback_index=fallback_index,
+        sequence_regex=sequence_regex
+    )
 
 
 def protect_existing_column(df, column_name):
@@ -85,8 +90,23 @@ def add_sequential_columns(
 
     duration = parse_float_or_none(step_duration_s)
 
-    if time_col in df.columns:
-        local_time = pd.to_numeric(df[time_col], errors="coerce")
+    resolved_time_col = resolve_column(
+        df.columns,
+        preferred=time_col,
+        aliases=TIME_COLUMN_ALIASES,
+        df=df,
+        min_numeric=2
+    )
+    resolved_step_variable_col = resolve_column(
+        df.columns,
+        preferred=step_variable_col,
+        aliases=STEP_VARIABLE_ALIASES,
+        df=df,
+        min_numeric=1
+    )
+
+    if resolved_time_col in df.columns:
+        local_time = to_numeric_series(df[resolved_time_col])
 
         if duration is None:
             valid_time = local_time.dropna()
@@ -107,11 +127,11 @@ def add_sequential_columns(
         df["global_time_s"] = pd.NA
         df["global_time_min"] = pd.NA
 
-    if step_variable_col in df.columns:
-        step_values = pd.to_numeric(df[step_variable_col], errors="coerce")
+    if resolved_step_variable_col in df.columns:
+        step_values = to_numeric_series(df[resolved_step_variable_col])
         step_value = step_values.mean()
 
-        df["step_variable_name"] = step_variable_col
+        df["step_variable_name"] = resolved_step_variable_col
         df["step_variable_value"] = step_value
 
         if pd.notna(step_value):
@@ -134,7 +154,7 @@ def combine_sequential_file_paths(
     time_col="T_s",
     step_variable_col="Vf_V_vs_Ref",
     step_duration_s=300,
-    sequence_regex=r"#\s*(\d+)"
+    sequence_regex=DEFAULT_SEQUENCE_REGEX
 ):
     indexed_paths = []
 

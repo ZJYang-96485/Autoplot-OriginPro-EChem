@@ -16,7 +16,7 @@ from matplotlib.ticker import MultipleLocator, FixedLocator, FixedFormatter
 from flask import Flask, render_template, request, redirect, url_for, jsonify, flash
 from werkzeug.utils import secure_filename
 
-from data_loader import read_dataset, inspect_dataset, save_cleaned_dataset
+from data_loader import SUPPORTED_EXTENSIONS, read_dataset, inspect_dataset, save_cleaned_dataset
 from data_combiner import combine_file_paths
 from sequential_tools import combine_sequential_file_paths
 from conversion_tools import convert_dataset_variables
@@ -39,11 +39,11 @@ PLOT_DIR = BASE_DIR / "static" / "generated_plots"
 
 PERSIST_USER_DATASETS = False
 SAVE_PLOTS_TO_DISK = False
-PURGE_NON_TEST_DATA_ON_STARTUP = True
+PURGE_NON_TEST_DATA_ON_STARTUP = False
 PURGE_USER_DATA_AFTER_WORKFLOW = False
 TEMP_DATASETS = {}
 
-ALLOWED_EXTENSIONS = {"csv", "dat", "dta", "txt"}
+ALLOWED_EXTENSIONS = {extension.lstrip(".") for extension in SUPPORTED_EXTENSIONS}
 SECONDARY_MODES = {"none", "same_y_different_x", "same_x_different_y"}
 STEP_AXIS_MODES = {"auto_data", "uniform_custom"}
 STEP_AXIS_PLACEMENTS = {"uniform", "data_positions", "custom_positions"}
@@ -124,6 +124,11 @@ def write_manifest(manifest):
 
 def is_supported_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def supported_file_message():
+    extensions = ", ".join(sorted(f".{extension}" for extension in ALLOWED_EXTENSIONS))
+    return f"Supported files: {extensions}."
 
 
 def sanitize_color(value, default):
@@ -2550,7 +2555,7 @@ def upload_dataset():
         return redirect(url_for("index"))
 
     if not is_supported_file(file.filename):
-        flash("Only .csv, .dat, .dta, and .txt files are supported for now.")
+        flash(supported_file_message())
         return redirect(url_for("index"))
 
     safe_name = secure_filename(file.filename)
@@ -2594,7 +2599,7 @@ def upload_batch_dataset():
 
     for file in files:
         if not is_supported_file(file.filename):
-            flash("Only .csv, .dat, .dta, and .txt files are supported for batch upload.")
+            flash(supported_file_message())
             return redirect(url_for("index"))
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -2652,7 +2657,7 @@ def upload_sequence_dataset():
 
     for file in files:
         if not is_supported_file(file.filename):
-            flash("Only .csv, .dat, .dta, and .txt files are supported for sequential upload.")
+            flash(supported_file_message())
             return redirect(url_for("index"))
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

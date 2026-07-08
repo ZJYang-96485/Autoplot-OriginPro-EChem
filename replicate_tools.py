@@ -4,23 +4,11 @@ import math
 import numpy as np
 import pandas as pd
 
+from processing_utils import to_numeric_series
 
 
 def _to_numeric_series(values):
-    if isinstance(values, pd.DataFrame):
-        values = values.iloc[:, 0]
-
-    if isinstance(values, pd.Series):
-        cleaned = (
-            values.astype(str)
-            .str.strip()
-            .str.replace("\u2212", "-", regex=False)
-            .str.replace(",", ".", regex=False)
-        )
-        cleaned = cleaned.mask(cleaned.str.lower().isin(["", "none", "nan", "na", "n/a"]))
-        return pd.to_numeric(cleaned, errors="coerce")
-
-    return pd.to_numeric(values, errors="coerce")
+    return to_numeric_series(values)
 
 
 def _as_text(value):

@@ -9,6 +9,9 @@ def normalize_labels(file_paths, labels):
     if labels is None:
         return [Path(path).stem for path in file_paths]
 
+    if isinstance(labels, str):
+        labels = [labels]
+
     if len(labels) == 1 and len(file_paths) > 1:
         return labels * len(file_paths)
 

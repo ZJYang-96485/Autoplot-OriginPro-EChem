@@ -6,9 +6,12 @@ import csv
 
 import pandas as pd
 
+from processing_utils import clean_numeric_values as _clean_numeric_values
+from processing_utils import normalize_numeric_text
+
 
 COMMENT_PREFIXES = ("#", "//", "%", "!", ";")
-SUPPORTED_EXTENSIONS = {".csv", ".dat", ".dta", ".txt"}
+SUPPORTED_EXTENSIONS = {".csv", ".tsv", ".dat", ".dta", ".txt", ".xlsx", ".xls"}
 
 
 def read_text_file(file_path):
@@ -55,23 +58,7 @@ def make_unique_columns(columns):
 
 
 def clean_numeric_values(df):
-    cleaned = df.copy()
-
-    for column in cleaned.columns:
-        series = cleaned[column].astype(str).str.strip()
-        series = series.replace({"": pd.NA, "nan": pd.NA, "None": pd.NA})
-        numeric_candidate = series.str.replace(",", ".", regex=False)
-        numeric_candidate = pd.to_numeric(numeric_candidate, errors="coerce")
-
-        non_empty_count = series.notna().sum()
-        numeric_count = numeric_candidate.notna().sum()
-
-        if non_empty_count > 0 and numeric_count / non_empty_count >= 0.8:
-            cleaned[column] = numeric_candidate
-        else:
-            cleaned[column] = series
-
-    return cleaned
+    return _clean_numeric_values(df)
 
 
 def split_gamry_line(line):
@@ -170,6 +157,50 @@ def sniff_delimiter(text):
         return None
 
 
+def read_delimited_candidate(lines, delimiter, header):
+    candidate_text = "\n".join(lines)
+
+    if delimiter is None or delimiter == " ":
+        kwargs = {"sep": r"\s+", "engine": "python"}
+    else:
+        kwargs = {"sep": delimiter, "engine": "python"}
+
+    df = pd.read_csv(
+        io.StringIO(candidate_text),
+        header=header,
+        on_bad_lines="skip",
+        **kwargs
+    )
+
+    if header is None:
+        df.columns = [f"column_{index + 1}" for index in range(df.shape[1])]
+
+    df = df.dropna(axis=0, how="all").dropna(axis=1, how="all")
+
+    if df.shape[1] < 2 or df.empty:
+        return None
+
+    df.columns = make_unique_columns(df.columns)
+    df = clean_numeric_values(df)
+
+    return df
+
+
+def score_table(df, start_index, header):
+    numeric_columns = len(df.select_dtypes(include="number").columns)
+    non_empty_cells = int(df.notna().sum().sum())
+    named_columns = sum(1 for column in df.columns if re.search(r"[A-Za-z]", str(column)))
+    header_bonus = 1 if header == 0 and named_columns >= max(1, len(df.columns) // 2) else 0
+
+    return (
+        numeric_columns,
+        header_bonus,
+        min(len(df), 5000),
+        non_empty_cells,
+        -start_index
+    )
+
+
 def parse_generic_text_table(file_path):
     text = read_text_file(file_path)
     lines = text.splitlines()
@@ -189,28 +220,97 @@ def parse_generic_text_table(file_path):
     if not useful_lines:
         raise ValueError("No readable table lines were found.")
 
-    useful_text = "\n".join(useful_lines)
-    delimiter = sniff_delimiter(useful_text)
+    best = None
+    max_start = min(len(useful_lines), 30)
 
-    if delimiter is None or delimiter == " ":
-        df = pd.read_csv(io.StringIO(useful_text), sep=r"\s+", engine="python")
-    else:
-        df = pd.read_csv(io.StringIO(useful_text), sep=delimiter, engine="python")
+    for start_index in range(max_start):
+        candidate_lines = useful_lines[start_index:]
 
-    df.columns = make_unique_columns(df.columns)
-    df = clean_numeric_values(df)
+        if len(candidate_lines) < 2:
+            continue
 
-    return df, {}
+        candidate_text = "\n".join(candidate_lines[:30])
+        delimiters = [sniff_delimiter(candidate_text), "\t", ",", ";", " "]
+        seen_delimiters = set()
+
+        for delimiter in delimiters:
+            delimiter_key = delimiter or "whitespace"
+
+            if delimiter_key in seen_delimiters:
+                continue
+
+            seen_delimiters.add(delimiter_key)
+
+            for header in [0, None]:
+                try:
+                    df = read_delimited_candidate(candidate_lines, delimiter, header)
+                except Exception:
+                    continue
+
+                if df is None:
+                    continue
+
+                score = score_table(df, start_index, header)
+
+                if best is None or score > best[0]:
+                    best = (score, df)
+
+    if best is None:
+        raise ValueError("No readable tabular data block was found.")
+
+    return best[1], {}
+
+
+def parse_excel_table(file_path):
+    raw = pd.read_excel(file_path, header=None)
+    raw = raw.dropna(axis=0, how="all").dropna(axis=1, how="all")
+
+    if raw.empty or raw.shape[1] < 2:
+        raise ValueError("No readable worksheet table was found.")
+
+    best = None
+    max_start = min(len(raw) - 1, 30)
+
+    for start_index in range(max_start):
+        headers = raw.iloc[start_index].map(normalize_numeric_text).tolist()
+        non_empty_headers = [value for value in headers if pd.notna(value) and str(value).strip()]
+
+        if len(non_empty_headers) < 2:
+            continue
+
+        df = raw.iloc[start_index + 1:].copy()
+        df.columns = make_unique_columns(headers)
+        df = df.dropna(axis=0, how="all").dropna(axis=1, how="all")
+
+        if df.shape[1] < 2 or df.empty:
+            continue
+
+        df = clean_numeric_values(df)
+        score = score_table(df, start_index, 0)
+
+        if best is None or score > best[0]:
+            best = (score, df)
+
+    if best is None:
+        df = pd.read_excel(file_path)
+        df = df.dropna(axis=0, how="all").dropna(axis=1, how="all")
+        df.columns = make_unique_columns(df.columns)
+        df = clean_numeric_values(df)
+        return df, {}
+
+    return best[1], {}
 
 
 def read_dataset(file_path):
     path = Path(file_path)
     suffix = path.suffix.lower()
 
-    if suffix == ".csv":
-        df = pd.read_csv(path)
-        df.columns = make_unique_columns(df.columns)
-        df = clean_numeric_values(df)
+    if suffix in [".csv", ".tsv"]:
+        df, metadata = parse_generic_text_table(path)
+        return df
+
+    if suffix in [".xlsx", ".xls"]:
+        df, metadata = parse_excel_table(path)
         return df
 
     if suffix in [".dta", ".dat"]:

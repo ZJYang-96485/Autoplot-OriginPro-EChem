@@ -6,6 +6,12 @@ import hashlib
 import pandas as pd
 import numpy as np
 
+from data_loader import read_dataset
+from processing_utils import extract_sequence_index as _shared_extract_sequence_index
+from processing_utils import sequence_prefix as _shared_sequence_prefix
+from processing_utils import strip_upload_prefix
+from processing_utils import to_numeric_series
+
 
 def _json_safe(value):
     if isinstance(value, dict):
@@ -63,20 +69,7 @@ def _text(value):
 
 
 def _to_number(value):
-    if isinstance(value, pd.DataFrame):
-        value = value.iloc[:, 0]
-
-    if isinstance(value, pd.Series):
-        cleaned = (
-            value.astype(str)
-            .str.strip()
-            .str.replace("\u2212", "-", regex=False)
-            .str.replace(",", ".", regex=False)
-        )
-        cleaned = cleaned.mask(cleaned.str.lower().isin(["", "none", "nan", "na", "n/a"]))
-        return pd.to_numeric(cleaned, errors="coerce")
-
-    return pd.to_numeric(str(value).strip().replace("\u2212", "-").replace(",", "."), errors="coerce")
+    return to_numeric_series(value)
 
 
 def _uploaded_entries(context):
@@ -221,10 +214,21 @@ def _read_table_headerless(path, nrows=None):
 
 def _read_table_with_header(path):
     path = Path(path)
+
+    try:
+        df = read_dataset(path)
+
+        if df.shape[1] >= 2:
+            return df
+    except Exception as error:
+        last_error = error
+    else:
+        last_error = None
+
     extension = path.suffix.lower().lstrip(".")
 
     if extension in {"xlsx", "xls"}:
-        return pd.read_excel(path)
+        raise ValueError(f"Could not read table {path.name}: {last_error}")
 
     attempts = [
         {"sep": None, "engine": "python"},
@@ -233,7 +237,6 @@ def _read_table_with_header(path):
         {"sep": "\t"},
         {"sep": r"\s+", "engine": "python"}
     ]
-    last_error = None
 
     for kwargs in attempts:
         try:
@@ -563,7 +566,7 @@ def _classify_entry(entry):
     path = entry["path"]
     extension = entry["extension"]
 
-    if extension == "dta" and _has_dta_curve(path):
+    if extension in {"dta", "dat"} and _has_dta_curve(path):
         return {
             "parser": "gamry_dta_curve",
             "confidence": "high",
@@ -602,7 +605,7 @@ def _inspect_entry(entry):
     }
 
     try:
-        if entry["extension"] == "dta" and _has_dta_curve(entry["path"]):
+        if entry["extension"] in {"dta", "dat"} and _has_dta_curve(entry["path"]):
             df = _read_dta_curve(entry["path"])
         else:
             df = _read_table_headerless(entry["path"], nrows=8)
@@ -787,6 +790,10 @@ def _parse_long_table(entry, classification):
     }
 
 
+def _clean_source_stem(file_name):
+    return strip_upload_prefix(file_name)
+
+
 def _infer_condition(file_name):
     lower = str(file_name).lower()
 
@@ -796,17 +803,11 @@ def _infer_condition(file_name):
     if "pbs" in lower:
         return "PBS"
 
-    return Path(str(file_name)).stem
+    return _sequence_prefix(file_name)
 
 
 def _sequence_number(file_name):
-    stem = Path(str(file_name)).stem
-    match = re.search(r"#\s*(\d+)", stem)
-
-    if match:
-        return int(match.group(1))
-
-    return 0
+    return _shared_extract_sequence_index(file_name, fallback_index=0)
 
 
 def _is_b_sequence(file_name):
@@ -815,12 +816,7 @@ def _is_b_sequence(file_name):
 
 
 def _sequence_prefix(file_name):
-    stem = Path(str(file_name)).stem
-    stem = re.sub(r"\(\d+\)$", "", stem)
-    stem = re.sub(r"#\s*\d+.*$", "", stem)
-    stem = re.sub(r"CHRONOA[_-]*B$", "CHRONOA", stem, flags=re.IGNORECASE)
-    stem = stem.strip("_- ")
-    return stem or Path(str(file_name)).stem
+    return _shared_sequence_prefix(file_name)
 
 
 def _dataset_label(file_name):
@@ -901,8 +897,52 @@ def _stitch_dta_segments(segments):
             if span > 0:
                 offset += span
 
-    combined = pd.concat(stitched, ignore_index=True).drop(columns=["local_time_min"], errors="ignore")
-    return combined
+    return pd.concat(stitched, ignore_index=True)
+
+
+def _summarize_dta_steady_state(combined, tail_points=30):
+    rows = []
+    group_columns = ["condition", "dataset_label", "source_file", "sequence_number"]
+    source = combined.copy()
+
+    if "sequence_number" in source.columns:
+        sequence_numbers = pd.to_numeric(source["sequence_number"], errors="coerce").fillna(0)
+
+        if (sequence_numbers > 0).any():
+            source = source[sequence_numbers > 0]
+
+    for keys, group in source.groupby(group_columns, sort=False):
+        group = group.dropna(subset=["j_mA_cm2"]).copy()
+
+        if group.empty:
+            continue
+
+        sort_columns = [column for column in ["global_time_min", "local_time_min"] if column in group.columns]
+
+        if sort_columns:
+            group = group.sort_values(sort_columns)
+
+        tail = group.tail(max(1, int(tail_points)))
+        row = dict(zip(group_columns, keys))
+        row.update({
+            "tail_points": int(len(tail)),
+            "local_time_min_start": float(tail["local_time_min"].min()) if "local_time_min" in tail.columns else None,
+            "local_time_min_end": float(tail["local_time_min"].max()) if "local_time_min" in tail.columns else None,
+            "global_time_min_start": float(tail["global_time_min"].min()) if "global_time_min" in tail.columns else None,
+            "global_time_min_end": float(tail["global_time_min"].max()) if "global_time_min" in tail.columns else None,
+            "E_RHE_mean": float(tail["E_RHE"].mean()) if "E_RHE" in tail.columns else None,
+            "E_RHE_median": float(tail["E_RHE"].median()) if "E_RHE" in tail.columns else None,
+            "j_mA_cm2_mean": float(tail["j_mA_cm2"].mean()),
+            "j_mA_cm2_std": float(tail["j_mA_cm2"].std(ddof=1)) if len(tail) > 1 else 0.0,
+            "j_mA_cm2_min": float(tail["j_mA_cm2"].min()),
+            "j_mA_cm2_max": float(tail["j_mA_cm2"].max())
+        })
+        rows.append(row)
+
+    if not rows:
+        raise ValueError("No DTA steady-state summary rows were created.")
+
+    return pd.DataFrame(rows).sort_values(["condition", "dataset_label", "sequence_number", "source_file"])
 
 
 def _average_dta_sequences(combined):
@@ -1195,6 +1235,26 @@ def execute_workflow_plan(plan, context):
 
     parsers = [item.get("parser") for item in classifications]
     errors = []
+    supported_parser_names = {"gamry_dta_curve", "wide_pair_table", "long_table"}
+    processable_pairs = []
+
+    for entry, classification in zip(entries, classifications):
+        parser = classification.get("parser")
+
+        if parser in supported_parser_names:
+            processable_pairs.append((entry, classification))
+        else:
+            reason = classification.get("reason") or "No supported data shape was detected."
+            errors.append(f"{entry['original_name']}: skipped because {reason}")
+
+    if not processable_pairs:
+        raise ValueError("No processable uploaded or selected files were detected. " + "; ".join(errors[:5]))
+
+    if len(processable_pairs) != len(entries):
+        entries = [entry for entry, _ in processable_pairs]
+        classifications = [classification for _, classification in processable_pairs]
+        parsers = [item.get("parser") for item in classifications]
+
     created_dataset_ids = []
     last_dataset_ids = []
     step_results = []
@@ -1213,7 +1273,7 @@ def execute_workflow_plan(plan, context):
             raise ValueError("No DTA segments could be parsed. " + "; ".join(errors[:5]))
 
         combined = _stitch_dta_segments(segments)
-        averaged = _average_dta_sequences(combined)
+        steady_state = _summarize_dta_steady_state(combined)
         combined_dataset, _ = _register_dataset(
             context,
             combined,
@@ -1222,28 +1282,61 @@ def execute_workflow_plan(plan, context):
             "Generic parser registry DTA combined dataset",
             "dta_combined"
         )
-        averaged_dataset, _ = _register_dataset(
+        steady_state_dataset, _ = _register_dataset(
             context,
-            averaged,
-            "dta_averaged",
-            "averaged_replicates",
-            "Generic parser registry DTA averaged dataset",
-            "dta_averaged"
+            steady_state,
+            "dta_steady_state_summary",
+            "processed_data",
+            "Generic parser registry DTA steady-state summary",
+            "dta_steady_state_summary"
         )
-        created_dataset_ids = [combined_dataset["dataset_id"], averaged_dataset["dataset_id"]]
-        last_dataset_ids = [averaged_dataset["dataset_id"]]
+        created_dataset_ids = [combined_dataset["dataset_id"], steady_state_dataset["dataset_id"]]
+        last_dataset_ids = [steady_state_dataset["dataset_id"]]
+        averaged = None
+        averaged_dataset = None
+
+        try:
+            averaged = _average_dta_sequences(combined)
+            averaged_dataset, _ = _register_dataset(
+                context,
+                averaged,
+                "dta_averaged",
+                "averaged_replicates",
+                "Generic parser registry DTA averaged dataset",
+                "dta_averaged"
+            )
+            created_dataset_ids.append(averaged_dataset["dataset_id"])
+            last_dataset_ids = [averaged_dataset["dataset_id"]]
+        except Exception as error:
+            errors.append(f"DTA averaging skipped: {error}")
+
+        if averaged_dataset is not None and averaged is not None:
+            plot_sources.append({
+                "dataset": averaged_dataset,
+                "df": averaged,
+                "mapping": _recommended_plot_mapping(averaged, "global_time_min", "y_mean")
+            })
+
         plot_sources.append({
-            "dataset": averaged_dataset,
-            "df": averaged,
-            "mapping": _recommended_plot_mapping(averaged, "global_time_min", "y_mean")
+            "dataset": combined_dataset,
+            "df": combined,
+            "mapping": _recommended_plot_mapping(combined, "global_time_min", "j_mA_cm2")
         })
 
-        if _max_plot_count(parameters) > 1:
-            plot_sources.append({
-                "dataset": combined_dataset,
-                "df": combined,
-                "mapping": _recommended_plot_mapping(combined, "global_time_min", "j_mA_cm2")
-            })
+        plot_sources.append({
+            "dataset": steady_state_dataset,
+            "df": steady_state,
+            "mapping": _recommended_plot_mapping(steady_state, "sequence_number", "j_mA_cm2_mean")
+        })
+
+        averaged_summary = []
+
+        if averaged is not None:
+            averaged_summary = _summarize_by_condition(
+                averaged.rename(columns={"y_mean": "plot_y"}),
+                "global_time_min",
+                "plot_y"
+            )
 
         step_results.append({
             "step_id": 1,
@@ -1251,8 +1344,13 @@ def execute_workflow_plan(plan, context):
             "created_dataset_ids": created_dataset_ids,
             "file_inspection": inspections,
             "combined_summary": _summarize_by_condition(combined, "global_time_min", "j_mA_cm2"),
-            "averaged_summary": _summarize_by_condition(averaged.rename(columns={"y_mean": "plot_y"}), "global_time_min", "plot_y"),
-            "recommended_plot_mapping": _recommended_plot_mapping(averaged, "global_time_min", "y_mean"),
+            "steady_state_summary": steady_state.to_dict(orient="records"),
+            "averaged_summary": averaged_summary,
+            "recommended_plot_mapping": (
+                _recommended_plot_mapping(averaged, "global_time_min", "y_mean")
+                if averaged is not None
+                else _recommended_plot_mapping(combined, "global_time_min", "j_mA_cm2")
+            ),
             "errors": errors[:20]
         })
 

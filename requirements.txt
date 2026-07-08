@@ -4,3 +4,5 @@ flask
 matplotlib
 openai
 python-dotenv
+openpyxl
+xlrd

@@ -440,7 +440,7 @@
                     <textarea id="workflow_prompt" placeholder="Example: I uploaded one PBS control and two PBS+NaNO3 replicates. Clean the files, convert current to j_mA_cm2, average the PBS+NaNO3 replicates, and generate a publication-style comparison plot."></textarea>
 
                     <label for="workflow_files">Upload files for AI workflow</label>
-                    <input type="file" id="workflow_files" name="workflow_files" accept=".csv,.dat,.dta,.txt" multiple>
+                    <input type="file" id="workflow_files" name="workflow_files" accept=".csv,.tsv,.dat,.dta,.txt,.xlsx,.xls" multiple>
 
                     <div class="workflow-actions">
                         <button type="button" id="workflow_plan_button" onclick="createAIWorkflowPlan()">Create Workflow Plan</button>
@@ -500,12 +500,12 @@
                 <input type="text" id="dataset_name" name="dataset_name" placeholder="Example: 1600 rpm chronoamperometry">
 
                 <label for="dataset_file">Data file</label>
-                <input type="file" id="dataset_file" name="dataset_file" accept=".csv,.dat,.dta,.txt">
+                <input type="file" id="dataset_file" name="dataset_file" accept=".csv,.tsv,.dat,.dta,.txt,.xlsx,.xls">
 
                 <button type="submit">Upload and Clean Dataset</button>
             </form>
 
-            <p class="hint">Supported formats: .csv, .dat, .dta, .txt</p>
+            <p class="hint">Supported formats: .csv, .tsv, .dat, .dta, .txt, .xlsx, .xls</p>
         </section>
 
         <section class="card">
@@ -519,7 +519,7 @@
                 <input type="text" id="batch_condition" name="batch_condition" placeholder="Example: condition A">
 
                 <label for="dataset_files">Data files</label>
-                <input type="file" id="dataset_files" name="dataset_files" accept=".csv,.dat,.dta,.txt" multiple>
+                <input type="file" id="dataset_files" name="dataset_files" accept=".csv,.tsv,.dat,.dta,.txt,.xlsx,.xls" multiple>
 
                 <button type="submit">Upload and Combine Files</button>
             </form>
@@ -544,7 +544,7 @@
 
                     <div class="form-grid-full">
                         <label for="sequence_files">Sequential files</label>
-                        <input type="file" id="sequence_files" name="sequence_files" accept=".csv,.dat,.dta,.txt" multiple>
+                        <input type="file" id="sequence_files" name="sequence_files" accept=".csv,.tsv,.dat,.dta,.txt,.xlsx,.xls" multiple>
                     </div>
 
                     <div>
