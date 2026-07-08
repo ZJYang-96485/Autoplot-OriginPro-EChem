@@ -41,19 +41,21 @@ E / V vs. RHE, NaNO₃, H₂O₂, mA cm⁻², mol L⁻¹, s⁻¹
 
 In addition, LaTeX is enabled.
 
-## AI Assistant Setup (Optional, Charge to OpenAI with a very small amount)
+## AI Assistant Setup (Optional, Uses the OpenAI API)
 
-The AI Plot Assistant uses the OpenAI API. Each user must **provide their own OpenAI API key**.
+The AI Plot Assistant and AI Workflow Assistant use the OpenAI API. Each user must **provide their own OpenAI API key**.
 
 Create a local `.env` file in the project root:
 
 ```env
 OPENAI_API_KEY=your_api_key_here
 
-AI_MODEL=gpt-5.4-mini
-AI_PLOT_MODEL=gpt-5.4-mini
-AI_WORKFLOW_MODEL=gpt-5.4-mini
+AI_MODEL=gpt-5.5-pro
+AI_PLOT_MODEL=gpt-5.5-pro
+AI_WORKFLOW_MODEL=gpt-5.5-pro
 ```
+
+`gpt-5.5-pro` is the highest-accuracy setting for the AI plot and workflow assistants. If you want lower latency and cost, set `AI_MODEL`, `AI_PLOT_MODEL`, or `AI_WORKFLOW_MODEL` to `gpt-5.5`.
 
 If you are new to the OpenAI API, go to `https://platform.openai.com` and create your own API key. You also need to set up billing or add credits in your OpenAI API account before the assistant can make requests.
 
@@ -75,9 +77,9 @@ Additional general presets include publication, thesis, presentation, poster, mo
 
 ## AI Plot Assistant Prompt Template
 
-The AI Plot Assistant is designed to help users fill plotting settings more efficiently. It is only for graph generation and plot formatting. It does not clean, merge, average, or restructure raw experimental data.
+The AI Plot Assistant is designed to help users fill plotting settings more efficiently. It is only for graph generation and plot formatting.
 
-Users should prepare their dataset first. This includes combining files, assigning condition names, converting variables, averaging replicates, and creating any columns required for plotting. After the dataset is ready, the AI Plot Assistant can help generate the plotting configuration.
+For cleaning, merging, averaging, or restructuring raw experimental data, use the AI Workflow Assistant first. After the dataset is ready, the AI Plot Assistant can help generate the plotting configuration.
 
 ## Guideline 1: Using AI to Create a Data-Processing Prompt
 

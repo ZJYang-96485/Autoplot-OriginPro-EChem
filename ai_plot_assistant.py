@@ -6,7 +6,7 @@ from openai import OpenAI
 
 load_dotenv()
 
-AI_MODEL = os.getenv("AI_PLOT_MODEL", os.getenv("AI_MODEL", "gpt-5.4"))
+AI_MODEL = os.getenv("AI_PLOT_MODEL", os.getenv("AI_MODEL", "gpt-5.5-pro"))
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 STYLE_PROFILES = [
