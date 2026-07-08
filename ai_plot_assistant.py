@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -24,6 +25,8 @@ STYLE_PROFILES = [
     "colorblind",
     "dark"
 ]
+
+SUPPORTED_PLOT_TYPES = ["line", "scatter", "line_scatter", "bar", "histogram", "box", "count"]
 
 STYLE_PRESETS = {
     "default": {},
@@ -377,7 +380,7 @@ PLOT_CONFIG_SCHEMA = {
         "plot_title": {"type": "string"},
         "x_column": {"type": "string"},
         "y_column": {"type": "string"},
-        "plot_type": {"type": "string", "enum": ["line", "scatter", "line_scatter", "bar", "histogram", "box", "violin", "heatmap"]},
+        "plot_type": {"type": "string", "enum": SUPPORTED_PLOT_TYPES},
         "x_label": {"type": "string"},
         "y_label": {"type": "string"},
         "x_min": {"type": ["number", "null"]},
@@ -669,6 +672,412 @@ def _find_column(column_names, candidates):
             return lookup[candidate.lower()]
 
     return None
+
+
+def _known_columns(values, column_names):
+    lookup = {str(column): column for column in column_names}
+    columns = []
+
+    if not isinstance(values, list):
+        return columns
+
+    for value in values:
+        key = str(value)
+
+        if key in lookup and lookup[key] not in columns:
+            columns.append(lookup[key])
+
+    return columns
+
+
+def _normalize_dataset_profile(dataset_profile, column_names):
+    profile = dataset_profile if isinstance(dataset_profile, dict) else {}
+    column_profiles = profile.get("column_profiles", {})
+
+    if not isinstance(column_profiles, dict):
+        column_profiles = {}
+
+    column_profiles = {
+        str(column): details
+        for column, details in column_profiles.items()
+        if str(column) in column_names and isinstance(details, dict)
+    }
+
+    numeric_columns = _known_columns(profile.get("numeric_columns", []), column_names)
+    categorical_columns = _known_columns(profile.get("categorical_columns", []), column_names)
+    raw_column_types = profile.get("column_types", {})
+    column_types = {}
+
+    if isinstance(raw_column_types, dict):
+        for column, value in raw_column_types.items():
+            column = str(column)
+
+            if column in column_names:
+                column_types[column] = str(value).strip().lower()
+
+    for column, details in column_profiles.items():
+        column_type = str(details.get("type", "")).strip().lower()
+
+        if column_type in {"numeric", "number", "float", "integer", "int"}:
+            column_types.setdefault(column, "numeric")
+        elif column_type in {"categorical", "category", "string", "text", "object", "boolean", "bool"}:
+            column_types.setdefault(column, "categorical")
+
+    for column in numeric_columns:
+        column_types[column] = "numeric"
+
+    for column in categorical_columns:
+        column_types.setdefault(column, "categorical")
+
+    if not numeric_columns:
+        numeric_columns = [column for column in column_names if column_types.get(column) == "numeric"]
+
+    if not categorical_columns:
+        categorical_columns = [column for column in column_names if column_types.get(column) == "categorical"]
+
+    return {
+        "rows": profile.get("rows", 0),
+        "columns": column_names,
+        "numeric_columns": numeric_columns,
+        "categorical_columns": categorical_columns,
+        "column_types": column_types,
+        "column_profiles": column_profiles
+    }
+
+
+def _is_valid_column(value, column_names, allow_none=True):
+    if value is None:
+        return allow_none
+
+    value = str(value).strip()
+
+    if allow_none and value.lower() in {"", "none", "null", "no", "n/a"}:
+        return True
+
+    return any(value == column or value.lower() == column.lower() for column in column_names)
+
+
+def _column_type(profile, column):
+    if column in [None, "", "none"]:
+        return "none"
+
+    return profile.get("column_types", {}).get(column, "unknown")
+
+
+def _column_unique_count(profile, column):
+    details = profile.get("column_profiles", {}).get(column, {})
+
+    for key in ["unique_count", "unique"]:
+        try:
+            value = details.get(key)
+
+            if value is not None:
+                return int(value)
+        except (TypeError, ValueError):
+            continue
+
+    return None
+
+
+def _request_mentions_any(user_request, terms):
+    text = str(user_request).lower()
+
+    return any(term in text for term in terms)
+
+
+def _normalized_request_text(user_request):
+    return re.sub(r"[^a-z0-9]+", " ", str(user_request).lower()).strip()
+
+
+def _column_mentioned(column, user_request):
+    column_text = re.sub(r"[^a-z0-9]+", " ", str(column).lower()).strip()
+    request_text = _normalized_request_text(user_request)
+
+    if not column_text:
+        return False
+
+    return re.search(rf"\b{re.escape(column_text)}\b", request_text) is not None
+
+
+def _mentioned_columns(columns, user_request):
+    return [column for column in columns if _column_mentioned(column, user_request)]
+
+
+def _columns_after_keyword(columns, user_request, keyword):
+    text = str(user_request).lower()
+
+    if keyword not in text:
+        return []
+
+    after = text.split(keyword, 1)[1]
+
+    return _mentioned_columns(columns, after)
+
+
+def _looks_like_time_or_order_column(column):
+    lower = str(column).strip().lower()
+    exact = {"t", "time", "date", "datetime", "timestamp", "year", "month", "day", "index", "step"}
+
+    if lower in exact:
+        return True
+
+    return any(term in lower for term in ["time", "date", "timestamp", "year", "month", "day", "index", "step"])
+
+
+def _choose_default_x_column(column_names, dataset_profile=None, user_request=""):
+    profile = _normalize_dataset_profile(dataset_profile, column_names)
+    numeric_columns = profile["numeric_columns"]
+    categorical_columns = profile["categorical_columns"]
+    mentioned_after_by = _columns_after_keyword(column_names, user_request, " by ")
+    mentioned_after_vs = _columns_after_keyword(column_names, user_request, " vs ")
+    mentioned_numeric = _mentioned_columns(numeric_columns, user_request)
+
+    if mentioned_after_by:
+        return mentioned_after_by[0]
+
+    if mentioned_after_vs:
+        return mentioned_after_vs[0]
+
+    if _request_mentions_any(user_request, ["histogram", "distribution", "frequency"]) and numeric_columns:
+        return mentioned_numeric[0] if mentioned_numeric else numeric_columns[0]
+
+    if _request_mentions_any(user_request, ["count", "frequency by", "bar chart", "bar plot"]) and categorical_columns:
+        mentioned_categorical = _mentioned_columns(categorical_columns, user_request)
+        return mentioned_categorical[0] if mentioned_categorical else categorical_columns[0]
+
+    for column in column_names:
+        if _looks_like_time_or_order_column(column):
+            return column
+
+    for preferred in ["x", "x_value", "feature", "variable"]:
+        match = _find_column(column_names, [preferred])
+
+        if match:
+            return match
+
+    if numeric_columns:
+        return numeric_columns[0]
+
+    if categorical_columns:
+        return categorical_columns[0]
+
+    return column_names[0]
+
+
+def _choose_default_y_column(column_names, dataset_profile=None, x_column=None, user_request=""):
+    profile = _normalize_dataset_profile(dataset_profile, column_names)
+    numeric_columns = [column for column in profile["numeric_columns"] if column != x_column]
+
+    if _request_mentions_any(user_request, ["histogram", "distribution", "count", "frequency"]) and not _request_mentions_any(user_request, [" vs ", " versus "]):
+        return "none"
+
+    mentioned_numeric = _mentioned_columns(numeric_columns, user_request)
+
+    if mentioned_numeric:
+        return mentioned_numeric[0]
+
+    preferred = [
+        "y",
+        "y_value",
+        "value",
+        "measurement",
+        "result",
+        "score",
+        "amount",
+        "total",
+        "rate",
+        "price",
+        "sales",
+        "revenue",
+        "response",
+        "signal",
+        "intensity",
+        "mean",
+        "y_mean",
+        "absorbance",
+        "j_mA_cm2",
+        "j_A_cm2",
+        "current_density",
+        "current_density_mA_cm2",
+        "I_A",
+        "Im_A",
+        "Current",
+        "current"
+    ]
+
+    lookup = {str(column).strip().lower(): column for column in numeric_columns}
+
+    for name in preferred:
+        if name.lower() in lookup:
+            return lookup[name.lower()]
+
+    for column in numeric_columns:
+        lower = str(column).strip().lower()
+
+        if any(term in lower for term in ["value", "score", "amount", "rate", "price", "sales", "response", "signal", "intensity", "mean"]):
+            return column
+
+    if numeric_columns:
+        return numeric_columns[0]
+
+    return "none"
+
+
+def _choose_default_group_column(column_names, dataset_profile=None, x_column=None, y_column=None, user_request=""):
+    if not _request_mentions_any(user_request, [" group", " grouped", " by ", " color", " colour", " compare", " category", " categories", " condition", " series"]):
+        return "none"
+
+    profile = _normalize_dataset_profile(dataset_profile, column_names)
+
+    for column in profile["categorical_columns"]:
+        if column in {x_column, y_column}:
+            continue
+
+        unique_count = _column_unique_count(profile, column)
+
+        if unique_count is None or 1 < unique_count <= 30:
+            return column
+
+    return "none"
+
+
+def _infer_generic_plot_type(config, dataset_profile, user_request):
+    text = str(user_request).lower()
+    x_column = config.get("x_column")
+    y_column = config.get("y_column")
+    x_type = _column_type(dataset_profile, x_column)
+    y_type = _column_type(dataset_profile, y_column)
+
+    if any(term in text for term in ["histogram", "distribution", "frequency distribution"]):
+        return "histogram"
+
+    if any(term in text for term in ["count plot", "count chart", "frequency by", "counts by"]):
+        return "count"
+
+    if "box" in text:
+        return "box"
+
+    if "bar" in text:
+        return "bar"
+
+    if "scatter" in text:
+        return "scatter"
+
+    if any(term in text for term in ["line", "curve", "trend", "time series", "over time"]):
+        return "line"
+
+    if x_type == "numeric" and y_type == "numeric":
+        return "line" if _looks_like_time_or_order_column(x_column) else "scatter"
+
+    if x_type == "categorical" and y_type == "numeric":
+        return "bar"
+
+    if x_type == "numeric" and y_type in {"none", "unknown"}:
+        return "histogram"
+
+    if x_type == "categorical" and y_type in {"none", "unknown"}:
+        return "count"
+
+    return config.get("plot_type") if config.get("plot_type") in SUPPORTED_PLOT_TYPES else "scatter"
+
+
+def _clear_step_axis(config):
+    config.update({
+        "use_step_axis": False,
+        "step_axis_mode": "auto_data",
+        "step_axis_placement": "uniform",
+        "step_axis_value_column": "none",
+        "step_axis_group_column": "none",
+        "step_axis_label": "",
+        "step_axis_custom_labels": "",
+        "step_axis_custom_positions": "",
+        "bottom_margin": None
+    })
+
+
+def _clear_secondary_axis(config):
+    config.update({
+        "secondary_mode": "none",
+        "x2_column": "none",
+        "y2_column": "none",
+        "top_x_label": "",
+        "right_y_label": "",
+        "second_label": ""
+    })
+
+
+def _apply_generic_dataset_defaults(config, column_names, dataset_profile, user_request):
+    profile = _normalize_dataset_profile(dataset_profile, column_names)
+    requested_plot_type = _request_mentions_any(
+        user_request,
+        ["line", "curve", "scatter", "bar", "histogram", "distribution", "box", "count", "frequency"]
+    )
+
+    if config.get("plot_type") not in SUPPORTED_PLOT_TYPES:
+        config["plot_type"] = "line"
+
+    if not _is_valid_column(config.get("x_column"), column_names, allow_none=False):
+        config["x_column"] = _choose_default_x_column(column_names, profile, user_request)
+
+    if not _is_valid_column(config.get("y_column"), column_names, allow_none=True):
+        config["y_column"] = "none"
+
+    if config.get("y_column") == "none" and not _request_mentions_any(user_request, ["histogram", "distribution", "count", "frequency"]):
+        config["y_column"] = _choose_default_y_column(column_names, profile, config.get("x_column"), user_request)
+
+    inferred_plot_type = _infer_generic_plot_type(config, profile, user_request)
+
+    if not requested_plot_type:
+        config["plot_type"] = inferred_plot_type
+    elif config["plot_type"] == "line" and inferred_plot_type in {"bar", "histogram", "count"}:
+        config["plot_type"] = inferred_plot_type
+
+    if config["plot_type"] in {"histogram", "count"}:
+        config["y_column"] = "none"
+        config["y_label"] = config.get("y_label") or "Count"
+        config["fit_guide"] = "none"
+        config["show_markers"] = False
+    elif config["plot_type"] in {"line", "line_scatter", "scatter", "bar", "box"} and config.get("y_column") == "none":
+        config["y_column"] = _choose_default_y_column(column_names, profile, config.get("x_column"), user_request)
+
+    if not _is_valid_column(config.get("group_column"), column_names, allow_none=True):
+        config["group_column"] = "none"
+
+    if config.get("group_column") == "none":
+        config["group_column"] = _choose_default_group_column(
+            column_names,
+            profile,
+            config.get("x_column"),
+            config.get("y_column"),
+            user_request
+        )
+
+    if config.get("group_column") != "none":
+        config["show_legend"] = True
+        config["group_color_mode"] = "auto"
+
+    if not config.get("x_label") and config.get("x_column") not in [None, "", "none"]:
+        config["x_label"] = config["x_column"]
+
+    if not config.get("y_label") and config.get("y_column") not in [None, "", "none"]:
+        config["y_label"] = config["y_column"]
+
+    if config["plot_type"] == "scatter":
+        config["show_markers"] = True
+
+        if not _request_mentions_any(user_request, ["connect", "line", "fit", "smooth"]):
+            config["fit_guide"] = "none"
+
+    if config["plot_type"] == "line" and _looks_like_time_or_order_column(config.get("x_column")):
+        config["line_order"] = "sort_x"
+
+    if not _request_mentions_any(user_request, ["step axis", "bottom axis", "bottom labels", "custom bottom", "top labels"]):
+        _clear_step_axis(config)
+
+    if not _request_mentions_any(user_request, ["secondary", "second axis", "dual axis", "top x", "right y", "twin"]):
+        _clear_secondary_axis(config)
+
+    return config
 
 
 def _apply_averaged_replicate_defaults(config, column_names, user_request):
@@ -966,42 +1375,7 @@ def _apply_electrochem_reference_defaults(config, column_names, user_request):
 
     return config
 
-def _choose_default_y_column(column_names):
-    preferred = [
-        "y_mean",
-        "absorbance",
-        "Abs",
-        "j_mA_cm2",
-        "j_A_cm2",
-        "current_density",
-        "current_density_mA_cm2",
-        "intensity",
-        "signal",
-        "response",
-        "y_value",
-        "I_A",
-        "Im_A",
-        "Current",
-        "current",
-        "y"
-    ]
-
-    lookup = {str(column).strip().lower(): column for column in column_names}
-
-    for name in preferred:
-        if name.lower() in lookup:
-            return lookup[name.lower()]
-
-    for column in column_names:
-        lower = str(column).strip().lower()
-
-        if any(term in lower for term in ["j_", "current", "im_", "i_", "response", "signal"]):
-            return column
-
-    return "none"
-
-
-def _validate_config(config, column_names):
+def _validate_config(config, column_names, dataset_profile=None, user_request=""):
     config["x_column"] = _match_column(config.get("x_column"), column_names, allow_none=False)
     config["y_column"] = _match_column(config.get("y_column"), column_names, allow_none=True)
     config["group_column"] = _match_column(config.get("group_column"), column_names, allow_none=True)
@@ -1017,18 +1391,23 @@ def _validate_config(config, column_names):
     if config["secondary_mode"] == "same_x_different_y" and config["y2_column"] == "none":
         config["secondary_mode"] = "none"
 
-    if config["plot_type"] in {"histogram", "bar"} and config["y_column"] == "none":
+    if config["plot_type"] in {"histogram", "count"} and config["y_column"] == "none":
         config["y_label"] = config["y_label"] or "Count"
 
-    if config["plot_type"] in {"line", "line_scatter", "scatter"} and config["y_column"] == "none":
-        fallback_y = _choose_default_y_column(column_names)
+    if config["plot_type"] in {"line", "line_scatter", "scatter", "bar", "box"} and config["y_column"] == "none":
+        fallback_y = _choose_default_y_column(
+            column_names,
+            dataset_profile=dataset_profile,
+            x_column=config["x_column"],
+            user_request=user_request
+        )
 
         if fallback_y != "none":
             config["y_column"] = fallback_y
         else:
             available_columns = ", ".join(column_names)
             raise ValueError(
-                "Line and scatter plots require a valid Y column. "
+                "Line, scatter, bar, and box plots require a valid Y column. "
                 f"No suitable default Y column was found. Available columns: {available_columns}"
             )
 
@@ -1040,7 +1419,7 @@ def _validate_config(config, column_names):
 
     return config
 
-def parse_plot_request(user_request, column_names):
+def parse_plot_request(user_request, column_names, dataset_profile=None):
     if not os.getenv("OPENAI_API_KEY"):
         raise RuntimeError("OPENAI_API_KEY is not set.")
 
@@ -1049,18 +1428,28 @@ def parse_plot_request(user_request, column_names):
     if not column_names:
         raise ValueError("No column names were provided.")
 
+    dataset_profile = _normalize_dataset_profile(dataset_profile, column_names)
     columns_text = ", ".join(column_names)
     profiles_text = ", ".join(STYLE_PROFILES)
+    plot_types_text = ", ".join(SUPPORTED_PLOT_TYPES)
+    profile_text = json.dumps(dataset_profile, indent=2)
 
     response = client.responses.create(
         model=AI_MODEL,
         instructions=(
-            "You are an AI assistant for a scientific plotting platform. "
+            "You are an AI assistant for a general scientific and analytical plotting platform. "
             "Convert the user's natural language request into a structured plotting configuration. "
+            "Use the dataset profile before relying on domain-specific assumptions. "
             "Only choose column fields from the available column names. "
-            "For line or scatter plots, always choose an existing Y column. "
-            "If y_mean exists, prefer y_mean for averaged datasets. If y_mean does not exist but j_mA_cm2 exists, use j_mA_cm2. "
-            "Use 'none' for optional column fields that are not needed, but never use 'none' for y_column in line or scatter plots. "
+            f"Supported plot types are: {plot_types_text}. Do not return unsupported plot types. "
+            "Use 'count' for categorical counts with no Y column and 'histogram' for one numeric distribution with no Y column. "
+            "For line, scatter, bar, and box plots, always choose an existing numeric Y column. "
+            "For numeric X and numeric Y, use scatter unless the request asks for a line/curve/trend or the X column is time/order-like. "
+            "For categorical X and numeric Y, use bar for simple comparisons and box for distributions or spread by category. "
+            "Use a categorical group column only when the user asks to compare, group, color, or split series. "
+            "Avoid secondary axes, step axes, fixed axis limits, and custom tick intervals unless the user explicitly asks for them. "
+            "Use readable labels based on selected columns when the user does not provide axis labels. "
+            "Use 'none' for optional column fields that are not needed, but never use 'none' for y_column in line, scatter, bar, or box plots. "
             "Apply the electrochemical PBS/PBS+NaNO3 reference-axis preset only when the user's request explicitly asks for an electrochemical/RHE/PBS/NO3 reference plot and the available columns support electrochemical data. Do not apply electrochemical defaults merely because the user requests publication or Nature style. "
             "Use null for numeric, boolean, and color fields when the user did not specify them and no style profile is clearly requested. "
             "When the user asks for a journal or output style, select the closest style_profile from the supported profiles. "
@@ -1069,7 +1458,7 @@ def parse_plot_request(user_request, column_names):
             "Use style_profile='thesis', 'presentation', or 'poster' when the figure is intended for those formats. "
             "Use style_profile='monochrome' for black-and-white printing, 'colorblind' for colorblind-safe plots, and 'dark' for dark-background slides. "
             "For electrochemistry, common axis labels include E / V vs. RHE, j / mA cm^-2, I / A, t / s, and t / min, but still follow the user's request. "
-            "For spectroscopy or UV-Vis datasets with wavelength and absorbance columns, use wavelength as X, absorbance as Y, condition/sample as group, disable secondary axes and step axes, clear electrochemical labels, and use automatic axis limits. "
+            "For spectroscopy or UV-Vis requests with wavelength and absorbance columns, use wavelength as X, absorbance as Y, condition/sample as group when appropriate, disable secondary axes and step axes, clear electrochemical labels, and use automatic axis limits. "
             "Use Matplotlib mathtext for scientific labels when appropriate, such as '$j$ / mA cm$^{-2}$', '$E$ / V vs. RHE', and '$t$ / min. "
             "Never return the literal string 'none', 'null', or 'n/a' for plot_title, primary_label, bottom_annotation, or notes; use an empty string instead. "
             "If the available columns include y_mean, y_std, y_sem, n_replicates, and condition, treat this as a pre-averaged replicate dataset. "
@@ -1080,6 +1469,7 @@ def parse_plot_request(user_request, column_names):
         input=(
             f"Supported style profiles: {profiles_text}\n\n"
             f"Available columns: {columns_text}\n\n"
+            f"Dataset profile JSON:\n{profile_text}\n\n"
             f"User request: {user_request}"
         ),
         text={
@@ -1095,10 +1485,11 @@ def parse_plot_request(user_request, column_names):
     output_text = _extract_output_text(response)
     config = json.loads(output_text)
     config = _merge_profile_defaults(config)
+    config = _apply_generic_dataset_defaults(config, column_names, dataset_profile, user_request)
     config = _apply_averaged_replicate_defaults(config, column_names, user_request)
     config = _apply_spectroscopy_defaults(config, column_names, user_request)
     config = _apply_electrochem_reference_defaults(config, column_names, user_request)
-    config = _validate_config(config, column_names)
+    config = _validate_config(config, column_names, dataset_profile, user_request)
 
     return config
 

@@ -228,6 +228,64 @@ def _token(value):
     return str(value).strip().lower()
 
 
+def _safe_column_name(value, fallback):
+    name = re.sub(r"[^\w]+", "_", str(value).strip())
+    name = re.sub(r"_+", "_", name).strip("_")
+
+    return name or fallback
+
+
+def _numeric_columns(df, min_numeric=2):
+    columns = []
+
+    for column in df.columns:
+        if _to_number(df[column]).notna().sum() >= min_numeric:
+            columns.append(column)
+
+    return columns
+
+
+def _categorical_columns(df, max_unique=30):
+    columns = []
+
+    for column in df.columns:
+        if column in _numeric_columns(df):
+            continue
+
+        series = df[column].dropna()
+
+        if series.empty:
+            continue
+
+        unique_count = int(series.astype(str).nunique())
+
+        if 1 < unique_count <= max_unique:
+            columns.append(column)
+
+    return columns
+
+
+def _looks_like_ordered_x(value):
+    text = _token(value)
+    terms = [
+        "time",
+        "date",
+        "timestamp",
+        "year",
+        "month",
+        "day",
+        "index",
+        "step",
+        "sequence",
+        "wavelength",
+        "frequency",
+        "position",
+        "distance"
+    ]
+
+    return text in {"t", "x"} or any(term in text for term in terms)
+
+
 def _looks_like_x_header(value):
     text = _token(value)
 
@@ -239,11 +297,21 @@ def _looks_like_x_header(value):
         "wave length",
         "nm",
         "time",
+        "date",
+        "timestamp",
+        "year",
+        "month",
+        "day",
+        "index",
+        "step",
         "potential",
         "voltage",
         "frequency",
         "freq",
         "energy",
+        "position",
+        "distance",
+        "angle",
         "x"
     ]
 
@@ -264,6 +332,17 @@ def _looks_like_y_header(value):
         "signal",
         "response",
         "counts",
+        "count",
+        "value",
+        "measurement",
+        "result",
+        "score",
+        "amount",
+        "total",
+        "rate",
+        "price",
+        "sales",
+        "revenue",
         "transmittance",
         "reflectance",
         "y"
@@ -340,7 +419,12 @@ def _find_column(columns, candidates, df=None, min_numeric=2):
         lower = str(column).strip().lower()
 
         for candidate in candidates:
-            if str(candidate).lower() in lower:
+            key = str(candidate).lower()
+
+            if len(key) < 2:
+                continue
+
+            if key in lower:
                 if df is None or _to_number(df[column]).notna().sum() >= min_numeric:
                     return column
 
@@ -356,21 +440,38 @@ def _detect_long_table(path):
     if df.shape[1] < 2:
         return None
 
+    numeric_columns = _numeric_columns(df)
+
     x_col = _find_column(
         df.columns,
-        ["wavelength_nm", "wavelength", "lambda", "time_min", "time", "t", "potential", "voltage", "E_RHE", "Vf", "frequency", "x"],
+        ["x", "x_value", "wavelength_nm", "wavelength", "lambda", "time_min", "time", "t", "date", "timestamp", "year", "month", "day", "index", "step", "potential", "voltage", "E_RHE", "Vf", "frequency", "position", "distance"],
         df
     )
     y_col = _find_column(
         df.columns,
-        ["absorbance", "abs", "y_mean", "j_mA_cm2", "current_density", "current", "Im", "I", "intensity", "signal", "response", "y"],
+        ["y", "y_value", "value", "measurement", "result", "score", "amount", "total", "rate", "price", "sales", "revenue", "absorbance", "abs", "y_mean", "j_mA_cm2", "current_density", "current", "Im", "I", "intensity", "signal", "response"],
         df
     )
+
+    if not x_col and numeric_columns:
+        ordered = [column for column in numeric_columns if _looks_like_ordered_x(column)]
+        x_col = ordered[0] if ordered else numeric_columns[0]
+
+    if not y_col:
+        y_candidates = [column for column in numeric_columns if column != x_col]
+
+        if y_candidates:
+            y_col = y_candidates[0]
+
     condition_col = _find_column(
         df.columns,
-        ["condition", "group", "sample", "label", "treatment", "electrolyte", "catalyst"],
+        ["condition", "group", "category", "class", "segment", "sample", "label", "treatment", "type", "series", "cohort", "region", "electrolyte", "catalyst"],
         None
     )
+
+    if not condition_col:
+        candidates = [column for column in _categorical_columns(df) if column not in {x_col, y_col}]
+        condition_col = candidates[0] if candidates else ""
 
     if not x_col or not y_col:
         return None
@@ -462,7 +563,7 @@ def _output_x_name(x_header):
     if "frequency" in text or "freq" in text:
         return "frequency"
 
-    return "x_value"
+    return _safe_column_name(x_header, "x_value")
 
 
 def _output_y_name(y_header):
@@ -483,7 +584,7 @@ def _output_y_name(y_header):
     if "response" in text:
         return "response"
 
-    return "y_value"
+    return _safe_column_name(y_header, "y_value")
 
 
 def _parse_wide_pair_table(entry, classification):
@@ -533,8 +634,10 @@ def _parse_wide_pair_table(entry, classification):
         raise ValueError(f"{entry['original_name']}: no valid wide-pair data rows were parsed.")
 
     combined = pd.concat(rows, ignore_index=True)
-    x_candidates = [column for column in ["wavelength_nm", "time_min", "time", "potential", "frequency", "x_value"] if column in combined.columns]
-    y_candidates = [column for column in ["absorbance", "current", "intensity", "signal", "response", "y_value"] if column in combined.columns]
+    preferred_x = diagnostics[0]["output_x_column"] if diagnostics else "x_value"
+    preferred_y = diagnostics[0]["output_y_column"] if diagnostics else "y_value"
+    x_candidates = [column for column in [preferred_x, "wavelength_nm", "time_min", "time", "potential", "frequency", "x_value"] if column in combined.columns]
+    y_candidates = [column for column in [preferred_y, "absorbance", "current", "intensity", "signal", "response", "y_value"] if column in combined.columns]
 
     return combined, {
         "parser": "wide_pair_table",
@@ -820,6 +923,26 @@ def _summarize_by_condition(df, x_col, y_col):
     return summaries
 
 
+def _recommended_group_column(df):
+    if "condition" in df.columns and df["condition"].astype(str).nunique(dropna=True) > 1:
+        return "condition"
+
+    return "none"
+
+
+def _recommended_plot_type(x_column):
+    return "line" if _looks_like_ordered_x(x_column) else "scatter"
+
+
+def _recommended_plot_mapping(df, x_column, y_column):
+    return {
+        "x_column": x_column,
+        "y_column": y_column,
+        "group_column": _recommended_group_column(df),
+        "plot_type": _recommended_plot_type(x_column)
+    }
+
+
 def _register_dataset(context, df, prefix, dataset_type, source, description):
     processed_dir = Path(context["processed_data_dir"])
     processed_dir.mkdir(parents=True, exist_ok=True)
@@ -897,12 +1020,7 @@ def execute_workflow_plan(plan, context):
             "file_inspection": inspections,
             "combined_summary": _summarize_by_condition(combined, "global_time_min", "j_mA_cm2"),
             "averaged_summary": _summarize_by_condition(averaged.rename(columns={"y_mean": "plot_y"}), "global_time_min", "plot_y"),
-            "recommended_plot_mapping": {
-                "x_column": "global_time_min",
-                "y_column": "y_mean",
-                "group_column": "condition",
-                "plot_type": "line"
-            },
+            "recommended_plot_mapping": _recommended_plot_mapping(averaged, "global_time_min", "y_mean"),
             "errors": errors[:20]
         })
 
@@ -942,12 +1060,7 @@ def execute_workflow_plan(plan, context):
             "parse_reports": parse_reports,
             "condition_summary": _summarize_by_condition(combined, x_column, y_column),
             "dataset_columns": list(combined.columns),
-            "recommended_plot_mapping": {
-                "x_column": x_column,
-                "y_column": y_column,
-                "group_column": "condition",
-                "plot_type": "line"
-            },
+            "recommended_plot_mapping": _recommended_plot_mapping(combined, x_column, y_column),
             "errors": errors[:20]
         })
 
@@ -987,12 +1100,7 @@ def execute_workflow_plan(plan, context):
             "parse_reports": parse_reports,
             "condition_summary": _summarize_by_condition(combined, x_column, y_column),
             "dataset_columns": list(combined.columns),
-            "recommended_plot_mapping": {
-                "x_column": x_column,
-                "y_column": y_column,
-                "group_column": "condition",
-                "plot_type": "line"
-            },
+            "recommended_plot_mapping": _recommended_plot_mapping(combined, x_column, y_column),
             "errors": errors[:20]
         })
 

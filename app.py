@@ -460,6 +460,93 @@ def build_dataset_summary_for_ai(dataset):
     return summary
 
 
+def json_safe_value(value):
+    if value is None:
+        return None
+
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+
+    if hasattr(value, "item"):
+        value = value.item()
+
+    if isinstance(value, datetime):
+        return value.isoformat()
+
+    if isinstance(value, (str, int, float, bool)):
+        return value
+
+    return str(value)
+
+
+def sample_values_for_ai(series, max_values=5):
+    values = []
+
+    for value in series.dropna().unique()[:max_values]:
+        safe_value = json_safe_value(value)
+
+        if safe_value is not None:
+            values.append(safe_value)
+
+    return values
+
+
+def build_plot_dataset_profile_for_ai(dataset):
+    summary = build_dataset_summary_for_ai(dataset)
+    column_types = get_column_types(dataset)
+    profile = {
+        "file_name": summary.get("file_name", ""),
+        "dataset_type": summary.get("dataset_type", ""),
+        "description": summary.get("description", ""),
+        "source": summary.get("source", ""),
+        "rows": summary.get("rows", 0),
+        "columns": summary.get("columns", 0),
+        "column_names": summary.get("column_names", []),
+        "numeric_columns": summary.get("numeric_columns", []),
+        "categorical_columns": summary.get("categorical_columns", []),
+        "column_types": column_types,
+        "column_profiles": {}
+    }
+
+    file_path = Path(dataset.get("file_path", "")) if isinstance(dataset, dict) else None
+
+    if file_path is None or not file_path.exists():
+        return profile
+
+    try:
+        df = read_dataset(file_path)
+    except Exception:
+        return profile
+
+    for column in df.columns:
+        column_name = str(column)
+        series = df[column]
+        non_null = series.dropna()
+        details = {
+            "type": column_types.get(column_name, "unknown"),
+            "non_null": int(non_null.shape[0]),
+            "unique_count": int(non_null.nunique(dropna=True)),
+            "sample_values": sample_values_for_ai(series)
+        }
+
+        if details["type"] == "numeric":
+            numeric = pd.to_numeric(series, errors="coerce").dropna()
+
+            if not numeric.empty:
+                details.update({
+                    "min": json_safe_value(numeric.min()),
+                    "max": json_safe_value(numeric.max()),
+                    "mean": json_safe_value(numeric.mean())
+                })
+
+        profile["column_profiles"][column_name] = details
+
+    return profile
+
+
 def save_ai_workflow_uploads(files):
     create_dirs()
 
@@ -2279,6 +2366,17 @@ def ai_plot_config():
 
     user_request = payload.get("message", "").strip()
     column_names = payload.get("columns", [])
+    dataset_id = payload.get("dataset_id", "")
+    dataset_profile = None
+
+    if dataset_id:
+        dataset = get_dataset(dataset_id)
+
+        if dataset is not None:
+            dataset_profile = build_plot_dataset_profile_for_ai(dataset)
+
+            if not column_names:
+                column_names = dataset_profile.get("column_names", [])
 
     if not user_request:
         return jsonify({
@@ -2293,7 +2391,7 @@ def ai_plot_config():
         }), 400
 
     try:
-        config = parse_plot_request(user_request, column_names)
+        config = parse_plot_request(user_request, column_names, dataset_profile=dataset_profile)
         return jsonify({
             "ok": True,
             "config": config,
@@ -2304,7 +2402,7 @@ def ai_plot_config():
             "ok": False,
             "error": str(exc),
             "available_columns": column_names,
-            "hint": "Check that the selected dataset contains the requested Y column. Averaged datasets should contain y_mean; combined/converted datasets usually contain j_mA_cm2."
+            "hint": "Check that the selected dataset contains the requested X/Y columns and that the requested plot type matches the column types."
         }), 500
 
 @app.route("/", methods=["GET"])
