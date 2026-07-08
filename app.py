@@ -1758,7 +1758,8 @@ def create_plot(
     major_grid_alpha=0.25,
     minor_grid_alpha=0.12,
     major_grid_width=0.7,
-    minor_grid_width=0.5
+    minor_grid_width=0.5,
+    force_save_to_disk=False
 ):
     dataset = get_dataset(dataset_id)
 
@@ -2224,7 +2225,7 @@ def create_plot(
     if bottom_margin is not None:
         fig.subplots_adjust(bottom=bottom_margin)
 
-    if SAVE_PLOTS_TO_DISK:
+    if SAVE_PLOTS_TO_DISK or force_save_to_disk:
         output_name = f"plot_{uuid.uuid4().hex[:12]}.png"
         output_path = PLOT_DIR / output_name
         fig.savefig(output_path)
@@ -2242,6 +2243,116 @@ def create_plot(
     return f"data:image/png;base64,{encoded}"
 
 
+def create_workflow_plot(dataset_id, mapping, title=""):
+    mapping = mapping if isinstance(mapping, dict) else {}
+    x_col = mapping.get("x_column") or mapping.get("x_col")
+    y_col = mapping.get("y_column") or mapping.get("y_col") or "none"
+    group_col = mapping.get("group_column") or mapping.get("group_col") or "none"
+    plot_type = mapping.get("plot_type") or "line"
+
+    if not x_col:
+        raise ValueError("Workflow plot mapping is missing an X column.")
+
+    show_legend = group_col not in [None, "", "none"]
+    line_plot = plot_type in ["line", "line_scatter"]
+
+    return create_plot(
+        dataset_id=dataset_id,
+        x_col=x_col,
+        y_col=y_col,
+        x_label=mapping.get("x_label", ""),
+        y_label=mapping.get("y_label", ""),
+        plot_type=plot_type,
+        plot_title=title or mapping.get("plot_title", ""),
+        bottom_annotation="",
+        marker_color=mapping.get("marker_color", "#FF5F05"),
+        line_color=mapping.get("line_color", "#13294B"),
+        primary_label="",
+        group_col=group_col,
+        group_label="",
+        group_color_mode="auto" if show_legend else "same",
+        data_reduction="raw",
+        summary_group_col="none",
+        x_summary_method="mean",
+        y_summary_method="mean_tail",
+        tail_fraction=0.2,
+        fit_guide="connect" if line_plot else "none",
+        smooth_window=5,
+        use_step_axis=False,
+        step_axis_mode="auto_data",
+        step_axis_placement="uniform",
+        step_axis_value_col="none",
+        step_axis_group_col="none",
+        step_axis_label="",
+        step_axis_max_ticks=12,
+        secondary_mode="none",
+        x2_col="none",
+        y2_col="none",
+        top_x_label="",
+        right_y_label="",
+        secondary_plot_type="line",
+        second_marker_color="#9A4DFF",
+        second_line_color="#9A4DFF",
+        second_label="",
+        line_order="sort_x" if line_plot else "original",
+        show_markers=not line_plot,
+        show_legend=show_legend,
+        marker_size=18,
+        line_width=2.0,
+        opacity=1.0,
+        axis_label_size=16,
+        tick_label_size=12,
+        axis_label_weight="bold",
+        spine_width=1.1,
+        tick_width=1.1,
+        tick_length=4,
+        show_full_frame=True,
+        tick_direction="in",
+        show_top_ticks=True,
+        show_bottom_ticks=True,
+        show_left_ticks=True,
+        show_right_ticks=True,
+        show_grid=False,
+        grid_axis="both",
+        grid_which="major",
+        major_grid_linestyle="solid",
+        minor_grid_linestyle="dashed",
+        major_grid_alpha=0.25,
+        minor_grid_alpha=0.12,
+        major_grid_width=0.7,
+        minor_grid_width=0.5,
+        title_size=16,
+        legend_font_size=10,
+        legend_location="best",
+        legend_frame=False,
+        figure_width=7.0,
+        figure_height=4.5,
+        figure_dpi=220,
+        x_min=None,
+        x_max=None,
+        x_tick_mode="auto",
+        x_major_interval=None,
+        x_minor_interval=None,
+        x_custom_ticks="",
+        x_custom_tick_labels="",
+        y_min=None,
+        y_max=None,
+        y_tick_mode="auto",
+        y_major_interval=None,
+        y_minor_interval=None,
+        y_custom_ticks="",
+        y_custom_tick_labels="",
+        step_axis_decimal_places=1,
+        step_axis_label_stride=2,
+        step_axis_custom_labels="",
+        step_axis_custom_positions="",
+        step_axis_label_rotation=0,
+        step_axis_label_pad=14,
+        bottom_margin=None,
+        force_save_to_disk=True
+    )
+
+
 
 @app.route("/api/privacy/clear-user-data", methods=["POST"])
 def clear_user_data_route():
@@ -2256,6 +2367,8 @@ def clear_user_data_route():
     except Exception as exc:
         return jsonify({
             "ok": False,
+            "changed": False,
+            "processed": False,
             "error": str(exc)
         }), 500
 
@@ -2325,12 +2438,16 @@ def ai_workflow_execute():
         if not approved:
             return jsonify({
                 "ok": False,
+                "changed": False,
+                "processed": False,
                 "error": "Workflow execution requires user approval."
             }), 400
 
         if not isinstance(plan, dict):
             return jsonify({
                 "ok": False,
+                "changed": False,
+                "processed": False,
                 "error": "Missing workflow plan."
             }), 400
 
@@ -2341,7 +2458,8 @@ def ai_workflow_execute():
                 "processed_data_dir": PROCESSED_DATA_DIR,
                 "get_dataset": get_dataset,
                 "register_dataset": register_dataset,
-                "create_plot": create_plot
+                "create_plot": create_plot,
+                "create_workflow_plot": create_workflow_plot
             }
         )
 
@@ -2351,12 +2469,17 @@ def ai_workflow_execute():
 
         return jsonify({
             "ok": True,
-            **result
+            "changed": bool(result.get("changed", result.get("created_dataset_ids") or result.get("plot_urls"))),
+            "processed": True,
+            "created_dataset_count": len(result.get("created_dataset_ids", [])),
+            "generated_plot_count": len(result.get("plot_urls", []))
         })
 
     except Exception as exc:
         return jsonify({
             "ok": False,
+            "changed": False,
+            "processed": False,
             "error": str(exc)
         }), 500
 

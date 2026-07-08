@@ -38,6 +38,7 @@ def compact_file_summaries(items):
             compact.append({"file_name": Path(item).name})
         elif isinstance(item, dict):
             compact.append({
+                "dataset_id": item.get("dataset_id", ""),
                 "file_name": item.get("file_name", ""),
                 "file_extension": item.get("file_extension", ""),
                 "rows": item.get("rows", 0),
@@ -49,9 +50,44 @@ def compact_file_summaries(items):
     return compact
 
 
+def _dataset_ids(items):
+    ids = []
+
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+
+        value = _clean_text(item.get("dataset_id"))
+
+        if value:
+            ids.append(value)
+
+    return ids
+
+
+def _requested_plot_count(user_request):
+    text = _clean_text(user_request).lower()
+
+    if any(term in text for term in ["no plot", "without plot", "do not plot", "don't plot"]):
+        return 0
+
+    wants_plot = any(term in text for term in ["plot", "figure", "chart", "graph", "visual"])
+
+    if not wants_plot:
+        return 0
+
+    if any(term in text for term in ["all plots", "several", "multiple", "every", "each", "separate plots"]):
+        return 4
+
+    return 1
+
+
 def create_workflow_plan(user_request, file_summaries, current_datasets=None, preset_name=None):
     user_request = _clean_text(user_request)
     file_summaries = compact_file_summaries(file_summaries)
+    current_datasets = compact_file_summaries(current_datasets)
+    input_dataset_ids = _dataset_ids(current_datasets)
+    max_plots = _requested_plot_count(user_request)
 
     return {
         "workflow_name": "Generic parser-registry workflow",
@@ -76,9 +112,14 @@ def create_workflow_plan(user_request, file_summaries, current_datasets=None, pr
                 "title": "Inspect files, classify data shape, and execute the matching parser",
                 "rationale": "Use data-shape detection rather than hardcoding every dataset type.",
                 "input_files": [_file_name(item) for item in file_summaries],
-                "input_dataset_ids": [],
+                "input_dataset_ids": input_dataset_ids,
                 "parameters": {
-                    "user_request": user_request
+                    "user_request": user_request,
+                    "combine_uploaded_files": True,
+                    "combine_selected_datasets": bool(input_dataset_ids),
+                    "clean_before_combine": True,
+                    "generate_plots": max_plots > 0,
+                    "max_plots": max_plots
                 },
                 "output_name": "processed_dataset",
                 "user_confirmation_needed": [

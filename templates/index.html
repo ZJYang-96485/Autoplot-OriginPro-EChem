@@ -53,6 +53,42 @@
             color: #13294B;
         }
 
+        .grid > .card:not(.is-open):not(.plot-card) > :not(h2) {
+            display: none;
+        }
+
+        .grid > .card > h2 {
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 0;
+        }
+
+        .grid > .card > h2::after {
+            content: "+";
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            border-radius: 999px;
+            background: #e8edf5;
+            color: #13294B;
+            font-size: 18px;
+            line-height: 1;
+            flex: 0 0 auto;
+        }
+
+        .grid > .card.is-open > h2 {
+            margin-bottom: 16px;
+        }
+
+        .grid > .card.is-open > h2::after {
+            content: "-";
+        }
+
         label {
             display: block;
             margin-top: 14px;
@@ -311,6 +347,14 @@
             min-height: 120px;
         }
 
+        .workflow-preview.compact-result {
+            min-height: auto;
+            background: #f0f4f8;
+            color: #13294B;
+            font-size: 18px;
+            font-weight: 700;
+        }
+
         .workflow-result-link {
             display: inline-block;
             margin-top: 10px;
@@ -443,7 +487,7 @@
                 </table>
             </div>
 
-            <pre id="workflow_execute_result" class="workflow-preview hidden"></pre>
+            <pre id="workflow_execute_result" class="workflow-preview compact-result hidden"></pre>
 
             <p class="hint">The AI can plan cleaning, sequence stitching, variable conversion, dataset combining, replicate averaging, and plotting. It can only execute approved built-in functions.</p>
         </section>
@@ -1433,6 +1477,36 @@
     let latestAIWorkflowPlan = null;
     let latestAIWorkflowUploads = [];
 
+    function initializeToolFolders() {
+        document.querySelectorAll(".grid > .card").forEach(card => {
+            if (card.classList.contains("plot-card")) {
+                card.classList.add("is-open");
+                return;
+            }
+
+            const heading = card.querySelector(":scope > h2");
+
+            if (!heading) {
+                return;
+            }
+
+            heading.setAttribute("role", "button");
+            heading.setAttribute("tabindex", "0");
+
+            const toggle = () => {
+                card.classList.toggle("is-open");
+            };
+
+            heading.addEventListener("click", toggle);
+            heading.addEventListener("keydown", event => {
+                if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    toggle();
+                }
+            });
+        });
+    }
+
     function getSelectedWorkflowDatasetIds() {
         return Array.from(document.querySelectorAll('input[name="workflow_dataset_ids"]:checked'))
             .map(input => input.value)
@@ -1570,24 +1644,24 @@
 
             const data = await response.json();
 
-            showWorkflowJson(resultBox, data);
-
             if (!response.ok || !data.ok) {
-                statusBox.textContent = data.error || "Workflow execution failed.";
+                statusBox.textContent = "false";
+                resultBox.textContent = "false";
+                resultBox.classList.remove("hidden");
+                console.warn(data.error || "Workflow execution failed.");
                 return;
             }
 
-            const plotUrls = data.plot_urls || [];
-            let message = "Workflow executed successfully.";
-
-            if (plotUrls.length > 0) {
-                message += ` Generated plot: ${plotUrls[plotUrls.length - 1]}`;
-            }
-
-            message += " Refresh the page to see newly created datasets in the dropdown menus.";
-            statusBox.textContent = message;
+            const changed = Boolean(data.changed);
+            const resultText = changed ? "true" : "false";
+            statusBox.textContent = resultText;
+            resultBox.textContent = resultText;
+            resultBox.classList.remove("hidden");
         } catch (error) {
-            statusBox.textContent = `Workflow execution failed: ${error.message}`;
+            statusBox.textContent = "false";
+            resultBox.textContent = "false";
+            resultBox.classList.remove("hidden");
+            console.warn(`Workflow execution failed: ${error.message}`);
         } finally {
             executeButton.disabled = false;
         }
@@ -2436,6 +2510,7 @@
         toggleSecondaryOptions();
     });
 
+    initializeToolFolders();
     toggleSecondaryOptions();
 
     if (datasetSelect.value) {

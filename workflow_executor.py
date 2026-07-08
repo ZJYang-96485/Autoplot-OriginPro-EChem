@@ -106,6 +106,80 @@ def _uploaded_entries(context):
     return entries
 
 
+def _plan_steps(plan):
+    if not isinstance(plan, dict):
+        return []
+
+    steps = plan.get("steps", [])
+
+    return steps if isinstance(steps, list) else []
+
+
+def _plan_parameters(plan):
+    parameters = {}
+
+    for step in _plan_steps(plan):
+        if not isinstance(step, dict):
+            continue
+
+        step_parameters = step.get("parameters") or {}
+
+        if isinstance(step_parameters, dict):
+            parameters.update(step_parameters)
+
+    return parameters
+
+
+def _plan_dataset_ids(plan):
+    dataset_ids = []
+
+    for step in _plan_steps(plan):
+        if not isinstance(step, dict):
+            continue
+
+        values = step.get("input_dataset_ids") or []
+
+        if isinstance(values, str):
+            values = [values]
+
+        for value in values:
+            value = _text(value)
+
+            if value and value not in dataset_ids:
+                dataset_ids.append(value)
+
+    return dataset_ids
+
+
+def _selected_dataset_entries(context, plan):
+    entries = []
+    get_dataset = context.get("get_dataset")
+
+    if not callable(get_dataset):
+        return entries
+
+    for dataset_id in _plan_dataset_ids(plan):
+        dataset = get_dataset(dataset_id)
+
+        if not isinstance(dataset, dict):
+            continue
+
+        path = Path(_text(dataset.get("file_path")))
+
+        if not path.exists():
+            continue
+
+        entries.append({
+            "original_name": _text(dataset.get("file_name")) or path.name,
+            "path": path,
+            "extension": path.suffix.lower().lstrip("."),
+            "content_hash": _content_hash(path),
+            "dataset_id": dataset_id
+        })
+
+    return entries
+
+
 def _content_hash(path):
     hasher = hashlib.sha256()
 
@@ -658,8 +732,7 @@ def _parse_long_table(entry, classification):
     y = _to_number(df[y_col])
     x_name = _output_x_name(x_col)
     y_name = _output_y_name(y_col)
-
-    out = pd.DataFrame({
+    output_data = {
         "condition": condition,
         x_name: x,
         y_name: y,
@@ -669,7 +742,31 @@ def _parse_long_table(entry, classification):
         "source_x_col": x_col,
         "source_y_col": y_col,
         "dataset_label": condition
-    }).dropna(subset=["x_value", "y_value"])
+    }
+
+    used_names = set(output_data)
+
+    for column in df.columns:
+        if column in {x_col, y_col, condition_col}:
+            continue
+
+        values = _to_number(df[column])
+
+        if values.notna().sum() < 2:
+            continue
+
+        output_name = _safe_column_name(column, "value")
+        base_name = output_name
+        suffix = 2
+
+        while output_name in used_names:
+            output_name = f"{base_name}_{suffix}"
+            suffix += 1
+
+        output_data[output_name] = values
+        used_names.add(output_name)
+
+    out = pd.DataFrame(output_data).dropna(subset=["x_value", "y_value"])
 
     if y_name == "absorbance":
         out["saturated_or_clipped"] = out[y_name] >= 9.99
@@ -943,6 +1040,126 @@ def _recommended_plot_mapping(df, x_column, y_column):
     }
 
 
+def _wants_plots(parameters):
+    if not isinstance(parameters, dict):
+        return False
+
+    if parameters.get("generate_plots") is not None:
+        return bool(parameters.get("generate_plots"))
+
+    text = _text(parameters.get("user_request")).lower()
+
+    if any(term in text for term in ["no plot", "without plot", "do not plot", "don't plot"]):
+        return False
+
+    return any(term in text for term in ["plot", "figure", "chart", "graph", "visual"])
+
+
+def _max_plot_count(parameters):
+    try:
+        value = int(parameters.get("max_plots", 1))
+    except (TypeError, ValueError):
+        value = 1
+
+    return max(0, min(value, 8))
+
+
+def _is_auxiliary_numeric_column(column):
+    lower = str(column).strip().lower()
+    exact = {
+        "n",
+        "n_replicates",
+        "sequence_number",
+        "source_index",
+        "sequence_index",
+        "x_value",
+        "y_value"
+    }
+
+    if lower in exact:
+        return True
+
+    return any(term in lower for term in ["_std", "_sem", "_min", "_max", "replicate", "index"])
+
+
+def _plot_mappings_for_df(df, base_mapping, max_plots):
+    if max_plots <= 0:
+        return []
+
+    base_mapping = dict(base_mapping or {})
+    mappings = [base_mapping]
+
+    if max_plots <= 1:
+        return mappings[:max_plots]
+
+    x_column = base_mapping.get("x_column")
+    base_y = base_mapping.get("y_column")
+    group_column = base_mapping.get("group_column", "none")
+
+    for column in _numeric_columns(df):
+        if column in {x_column, base_y, group_column}:
+            continue
+
+        if _is_auxiliary_numeric_column(column):
+            continue
+
+        mapping = {
+            "x_column": x_column,
+            "y_column": column,
+            "group_column": group_column,
+            "plot_type": _recommended_plot_type(x_column)
+        }
+        mappings.append(mapping)
+
+        if len(mappings) >= max_plots:
+            break
+
+    return mappings[:max_plots]
+
+
+def _generate_workflow_plots(context, plot_sources, parameters):
+    if not _wants_plots(parameters):
+        return [], []
+
+    create_workflow_plot = context.get("create_workflow_plot")
+
+    if not callable(create_workflow_plot):
+        return [], ["Workflow plot generation is unavailable."]
+
+    max_plots = _max_plot_count(parameters)
+    plot_urls = []
+    errors = []
+
+    for source in plot_sources:
+        dataset = source.get("dataset")
+        df = source.get("df")
+        base_mapping = source.get("mapping")
+
+        if not isinstance(dataset, dict) or df is None:
+            continue
+
+        dataset_id = dataset.get("dataset_id")
+
+        if not dataset_id:
+            continue
+
+        remaining = max_plots - len(plot_urls)
+
+        if remaining <= 0:
+            break
+
+        for mapping in _plot_mappings_for_df(df, base_mapping, remaining):
+            try:
+                plot_urls.append(create_workflow_plot(dataset_id, mapping))
+            except Exception as error:
+                errors.append(str(error))
+
+            if len(plot_urls) >= max_plots:
+                break
+
+    return plot_urls, errors
+
+
 def _register_dataset(context, df, prefix, dataset_type, source, description):
     processed_dir = Path(context["processed_data_dir"])
     processed_dir.mkdir(parents=True, exist_ok=True)
@@ -964,10 +1181,11 @@ def _all_same_parser(classifications):
 
 
 def execute_workflow_plan(plan, context):
-    entries = _uploaded_entries(context)
+    parameters = _plan_parameters(plan)
+    entries = _uploaded_entries(context) + _selected_dataset_entries(context, plan)
 
     if not entries:
-        raise ValueError("No uploaded files are available for workflow execution.")
+        raise ValueError("No uploaded or selected files are available for workflow execution.")
 
     inspections = [_inspect_entry(entry) for entry in entries]
     classifications = [item["classification"] for item in inspections if item.get("classification")]
@@ -980,6 +1198,7 @@ def execute_workflow_plan(plan, context):
     created_dataset_ids = []
     last_dataset_ids = []
     step_results = []
+    plot_sources = []
 
     if all(parser == "gamry_dta_curve" for parser in parsers):
         segments = []
@@ -1013,6 +1232,19 @@ def execute_workflow_plan(plan, context):
         )
         created_dataset_ids = [combined_dataset["dataset_id"], averaged_dataset["dataset_id"]]
         last_dataset_ids = [averaged_dataset["dataset_id"]]
+        plot_sources.append({
+            "dataset": averaged_dataset,
+            "df": averaged,
+            "mapping": _recommended_plot_mapping(averaged, "global_time_min", "y_mean")
+        })
+
+        if _max_plot_count(parameters) > 1:
+            plot_sources.append({
+                "dataset": combined_dataset,
+                "df": combined,
+                "mapping": _recommended_plot_mapping(combined, "global_time_min", "j_mA_cm2")
+            })
+
         step_results.append({
             "step_id": 1,
             "action": "gamry_dta_curve_parser",
@@ -1052,6 +1284,11 @@ def execute_workflow_plan(plan, context):
         )
         created_dataset_ids = [dataset["dataset_id"]]
         last_dataset_ids = [dataset["dataset_id"]]
+        plot_sources.append({
+            "dataset": dataset,
+            "df": combined,
+            "mapping": _recommended_plot_mapping(combined, x_column, y_column)
+        })
         step_results.append({
             "step_id": 1,
             "action": "wide_pair_table_parser",
@@ -1092,6 +1329,11 @@ def execute_workflow_plan(plan, context):
         )
         created_dataset_ids = [dataset["dataset_id"]]
         last_dataset_ids = [dataset["dataset_id"]]
+        plot_sources.append({
+            "dataset": dataset,
+            "df": combined,
+            "mapping": _recommended_plot_mapping(combined, x_column, y_column)
+        })
         step_results.append({
             "step_id": 1,
             "action": "long_table_parser",
@@ -1110,10 +1352,14 @@ def execute_workflow_plan(plan, context):
             f"Detected parsers: {parsers}. Review file_inspection diagnostics before processing."
         )
 
+    plot_urls, plot_errors = _generate_workflow_plots(context, plot_sources, parameters)
+    errors.extend(plot_errors)
+
     result = {
+        "changed": bool(created_dataset_ids or plot_urls),
         "created_dataset_ids": created_dataset_ids,
         "last_dataset_ids": last_dataset_ids,
-        "plot_urls": [],
+        "plot_urls": plot_urls,
         "step_results": step_results,
         "file_inspection": inspections
     }
